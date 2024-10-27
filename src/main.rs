@@ -1,34 +1,28 @@
-mod waker;
+use std::future::Future;
+use std::sync::mpsc::{Receiver, Sender, channel};
+use std::pin::Pin;
+use std::task::{RawWaker, Waker, Context, Poll};
+use std::time::{Instant, Duration};
 
-use crate::waker::{WakerData, VTABLE};
-use std::{
-    future::Future,
-    sync::mpsc::{channel, Sender},
-    task::{Context, Poll, RawWaker, Waker}, time::{Duration, Instant},
-};
-use std::{pin::Pin, sync::mpsc::Receiver};
+use waker::{WakerData, VTABLE};
+
+mod waker;
 
 pub type BoxedFuture<T> = Pin<Box<dyn Future<Output = T>>>;
 
-#[derive(Debug)]
-pub enum WakeResult {
-    ByRef,
-    Owned,
-}
-
 pub struct Executor {
     tasks_to_poll: Vec<Option<BoxedFuture<u32>>>,
-    tasks_receiver: Receiver<(usize, WakeResult)>,
-    tasks_sender: Sender<(usize, WakeResult)>,
+    tasks_receiver: Receiver<usize>, 
+    tasks_sender: Sender<usize>,
 }
 
 impl Default for Executor {
-    fn default() -> Self {
-        let (tx, rx) = channel();
+    fn default () -> Self {
+        let (tasks_sender, tasks_receiver) = channel();
         Self {
-            tasks_to_poll: vec![],
-            tasks_sender: tx,
-            tasks_receiver: rx,
+            tasks_to_poll: Vec::new(),
+            tasks_sender,
+            tasks_receiver
         }
     }
 }
@@ -36,16 +30,13 @@ impl Default for Executor {
 impl Executor {
     pub fn block_on(mut self, future: BoxedFuture<u32>) {
         self.tasks_to_poll.push(Some(future));
-        self.tasks_sender
-            .send((0, WakeResult::ByRef))
-            .expect("unable to do things");
+        self.tasks_sender.send(0).unwrap();
 
-        'outer: loop {
-            for (index, wr) in self.tasks_receiver.try_iter() {
+        'main: loop {
+            for index in self.tasks_receiver.try_iter() {
                 if index >= self.tasks_to_poll.len() {
                     panic!("index out of bounds");
                 }
-                // println!("[executor] polling {index} w/ {wr:?}");
 
                 let waker_data = WakerData {
                     id: index,
@@ -57,60 +48,28 @@ impl Executor {
                 let raw_waker =
                     RawWaker::new(raw_waker_data as *const WakerData as *const (), &VTABLE);
                 let waker = unsafe { Waker::from_raw(raw_waker) };
-                let mut cx = Context::from_waker(&waker);
+                let mut cx = Context::from_waker(&waker);   
 
-                let res = match wr {
-                    WakeResult::ByRef => {
-                        if let Some(task) = &mut self.tasks_to_poll[index] {
-                            match task.as_mut().poll(&mut cx) {
-                                Poll::Ready(res) => res,
-                                Poll::Pending => continue
-                            }
-                        } else {
-                            eprintln!("[executor] Asked to poll non-existent task {index}");
-                            continue;
-                        }
-                    }
-                    WakeResult::Owned => {
-                        if let Some(mut task) = std::mem::take(&mut self.tasks_to_poll[index]) {
-                            match task.as_mut().poll(&mut cx) {
-                                Poll::Ready(res) => res,
-                                Poll::Pending => continue,
-                            }
-                        } else {
-                            eprintln!("[executor] Asked to poll non-existent task {index}");
-                            continue;
-                        }
-                    }
-                };
+                if let Some(task) = &mut self.tasks_to_poll[index] {
+                    match task.as_mut().poll(&mut cx) {
+                        Poll::Ready(res) => {
+                            println!("[executor] Received Result: {res}");
+                            self.tasks_to_poll[index] = None;
 
-                println!("[executor] Received Result: {res}");
-                if index == 0 {
-                    break 'outer;
+                            if index == 0 {
+                                break 'main;
+                            }            
+                        },
+                        Poll::Pending => {}
+                    }
                 }
+
+
             }
         }
     }
 }
 
-fn main() {
-    Executor::default().block_on(Box::pin(async move {
-        println!("Starting futures");
-
-        let fa = TimerFuture::new(500);
-        let fb = TimerFuture::new(500);
-        let fc = TimerFuture::new(500);
-
-        println!("Started all");
-    
-        let t = Instant::now();
-        let res = futures::join!(fa, fb, fc);
-        let elapsed = t.elapsed();
-        println!("Got {res:?} in {elapsed:?}");
-        
-        res.0
-    }));
-}
 
 struct TimerFuture {
     slept: bool,
@@ -126,6 +85,7 @@ impl TimerFuture {
 impl Future for TimerFuture {
     type Output = u32;
     fn poll(mut self: Pin<&mut Self>, cx: &mut Context<'_>) -> Poll<Self::Output> {
+        println!("[timer {}] polling", self.timeout_ms);
         if !self.slept {
             let waker = cx.waker().clone();
             let time = self.timeout_ms as u64;
@@ -140,4 +100,58 @@ impl Future for TimerFuture {
             Poll::Ready(self.timeout_ms)
         }
     }
+}
+
+struct LessEfficientTimer {
+    start: Option<Instant>,
+    time: Duration,
+    timeout_ms: u32
+}
+
+impl LessEfficientTimer {
+    pub fn new (timeout_ms: u32) -> Self {
+        Self {
+            start: None,
+            timeout_ms,
+            time: Duration::from_millis(timeout_ms as u64)
+        }
+    }
+}
+
+impl Future for LessEfficientTimer {
+    type Output = u32;
+
+    fn poll(mut self: Pin<&mut Self>, cx: &mut Context<'_>) -> Poll<Self::Output> {
+        match self.start {
+            None => {
+                self.start = Some(Instant::now());
+            },
+            Some(x) => if x.elapsed() >= self.time {
+                return Poll::Ready(self.timeout_ms);
+            }
+        }
+
+        cx.waker().wake_by_ref();
+        Poll::Pending
+    }
+}
+
+
+fn main() {
+    Executor::default().block_on(Box::pin(async move {
+        println!("[main] Creating futures");
+
+        let one = LessEfficientTimer::new(250);
+        let two = LessEfficientTimer::new(500);
+        let three = LessEfficientTimer::new(750);
+
+        println!("[main] Created all");
+
+        let t = Instant::now();
+        let res = futures::join!(one, two, three);
+        let elapsed = t.elapsed();
+        println!("[main] Got {res:?} in {elapsed:?}");
+
+        0
+    }));
 }

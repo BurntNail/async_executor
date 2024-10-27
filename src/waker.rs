@@ -2,18 +2,17 @@ use std::{
     sync::mpsc::Sender, task::{RawWaker, RawWakerVTable}
 };
 
-use crate::WakeResult;
-
 #[derive(Clone)]
 pub struct WakerData {
-    pub tasks_sender: Sender<(usize, WakeResult)>,
+    pub tasks_sender: Sender<usize>,
     pub id: usize,
 }
 
 pub const VTABLE: RawWakerVTable = RawWakerVTable::new(clone, wake, wake_by_ref, drop);
 
-unsafe fn clone(data: *const ()) -> RawWaker {
+unsafe fn clone (data: *const ()) -> RawWaker {
     let old_data = std::ptr::read(data as *const WakerData);
+
     let new_data = WakerData {
         id: old_data.id,
         tasks_sender: old_data.tasks_sender.clone()
@@ -28,24 +27,21 @@ unsafe fn clone(data: *const ()) -> RawWaker {
 
 unsafe fn wake(data: *const ()) {
     let data = std::ptr::read(data as *const WakerData);
-    // println!("[vtable] wake: {}", data.id);
     data.tasks_sender
-        .send((data.id, WakeResult::Owned))
+        .send(data.id)
         .expect("unable to send task id to executor");
     std::mem::forget(data);
 }
 
 unsafe fn wake_by_ref(data: *const ()) {
     let data = std::ptr::read(data as *const WakerData);
-    // println!("[vtable] wake_by_ref: {}", data.id);
     data.tasks_sender
-        .send((data.id, WakeResult::ByRef))
+        .send(data.id)
         .expect("unable to send task id to executor");
     std::mem::forget(data);
 }
 
-unsafe fn drop(data: *const ()) {
+unsafe fn drop (data: *const ()) {
     let data = std::ptr::read(data as *const WakerData);
-    // println!("[vtable] drop: {}", data.id);
-    std::mem::drop(data);
+    std::mem::drop(data)
 }
