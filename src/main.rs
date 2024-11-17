@@ -10,6 +10,17 @@ mod waker;
 
 pub type BoxedFuture<T> = Pin<Box<dyn Future<Output = T>>>;
 
+
+
+
+#[macro_export]
+macro_rules! prt {
+    ($($arg:tt)*) => {{
+        if false {
+            println!($($arg)*)
+        }
+    }};}
+
 pub struct Executor {
     tasks_to_poll: Vec<Option<BoxedFuture<u32>>>,
     tasks_receiver: Receiver<usize>, 
@@ -37,11 +48,9 @@ impl Executor {
                 if index >= self.tasks_to_poll.len() {
                     panic!("index out of bounds");
                 }
+                prt!("[executor] polling {index}");
 
-                let waker_data = WakerData {
-                    id: index,
-                    tasks_sender: self.tasks_sender.clone(),
-                };
+                let waker_data = WakerData::new(self.tasks_sender.clone(), index);
                 let boxed_waker_data = Box::new(waker_data);
                 let raw_waker_data = Box::into_raw(boxed_waker_data);
 
@@ -51,64 +60,28 @@ impl Executor {
                 let mut cx = Context::from_waker(&waker);   
 
                 if let Some(task) = &mut self.tasks_to_poll[index] {
-                    match task.as_mut().poll(&mut cx) {
-                        Poll::Ready(res) => {
-                            println!("[executor] Received Result: {res}");
-                            self.tasks_to_poll[index] = None;
+                    if let Poll::Ready(res) = task.as_mut().poll(&mut cx) {
+                        println!("[executor] Received Result: {res}");
+                        self.tasks_to_poll[index] = None;
 
-                            if index == 0 {
-                                break 'main;
-                            }            
-                        },
-                        Poll::Pending => {}
+                        if index == 0 {
+                            break 'main;
+                        }
+
                     }
                 }
-
-
             }
         }
     }
 }
 
-
 struct TimerFuture {
-    slept: bool,
-    timeout_ms: u32
-}
-
-impl TimerFuture {
-    pub fn new (timeout_ms: u32) -> Self {
-        Self {timeout_ms, slept: false}
-    }
-}
-
-impl Future for TimerFuture {
-    type Output = u32;
-    fn poll(mut self: Pin<&mut Self>, cx: &mut Context<'_>) -> Poll<Self::Output> {
-        println!("[timer {}] polling", self.timeout_ms);
-        if !self.slept {
-            let waker = cx.waker().clone();
-            let time = self.timeout_ms as u64;
-            std::thread::spawn(move || {
-                std::thread::sleep(Duration::from_millis(time));
-                waker.wake();
-            });
-            self.slept = true;
-
-            Poll::Pending
-        } else {
-            Poll::Ready(self.timeout_ms)
-        }
-    }
-}
-
-struct LessEfficientTimer {
     start: Option<Instant>,
     time: Duration,
     timeout_ms: u32
 }
 
-impl LessEfficientTimer {
+impl TimerFuture {
     pub fn new (timeout_ms: u32) -> Self {
         Self {
             start: None,
@@ -118,7 +91,7 @@ impl LessEfficientTimer {
     }
 }
 
-impl Future for LessEfficientTimer {
+impl Future for TimerFuture {
     type Output = u32;
 
     fn poll(mut self: Pin<&mut Self>, cx: &mut Context<'_>) -> Poll<Self::Output> {
@@ -141,9 +114,9 @@ fn main() {
     Executor::default().block_on(Box::pin(async move {
         println!("[main] Creating futures");
 
-        let one = LessEfficientTimer::new(250);
-        let two = LessEfficientTimer::new(500);
-        let three = LessEfficientTimer::new(750);
+        let one = TimerFuture::new(250);
+        let two = TimerFuture::new(500);
+        let three = TimerFuture::new(750);
 
         println!("[main] Created all");
 
