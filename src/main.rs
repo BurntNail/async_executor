@@ -1,16 +1,17 @@
 use std::future::Future;
-use std::sync::mpsc::{Receiver, Sender, channel};
+use std::sync::mpsc::{Sender, channel};
 use std::pin::Pin;
+use std::sync::Arc;
+use std::sync::atomic::{AtomicBool, Ordering};
 use std::task::{RawWaker, Waker, Context, Poll};
+use std::thread::JoinHandle;
 use std::time::{Instant, Duration};
 
 use waker::{WakerData, VTABLE};
 
 mod waker;
 
-pub type BoxedFuture<T> = Pin<Box<dyn Future<Output = T>>>;
-
-
+pub type BoxedFuture<T> = Pin<Box<dyn Future<Output = T> + Send>>;
 
 
 #[macro_export]
@@ -19,59 +20,77 @@ macro_rules! prt {
         if false {
             println!($($arg)*)
         }
-    }};}
-
-pub struct Executor {
-    tasks_to_poll: Vec<Option<BoxedFuture<u32>>>,
-    tasks_receiver: Receiver<usize>, 
-    tasks_sender: Sender<usize>,
+    }};
 }
 
-impl Default for Executor {
-    fn default () -> Self {
-        let (tasks_sender, tasks_receiver) = channel();
-        Self {
-            tasks_to_poll: Vec::new(),
-            tasks_sender,
-            tasks_receiver
-        }
-    }
+pub struct Executor {
+    new_tasks_sender: Sender<BoxedFuture<u32>>,
+    can_finish: Arc<AtomicBool>,
+    running_thread: JoinHandle<()>,
 }
 
 impl Executor {
-    pub fn block_on(mut self, future: BoxedFuture<u32>) {
-        self.tasks_to_poll.push(Some(future));
-        self.tasks_sender.send(0).unwrap();
+    pub fn start() -> Executor {
+        let (new_tasks_sender, new_tasks_receiver) = channel();
+        let can_finish = Arc::new(AtomicBool::new(false));
 
-        'main: loop {
-            for index in self.tasks_receiver.try_iter() {
-                if index >= self.tasks_to_poll.len() {
-                    panic!("index out of bounds");
+        let thread_can_finish = can_finish.clone();
+        let running_thread = std::thread::spawn(move || {
+            let (tasks_sender, tasks_receiver) = channel();
+            let mut tasks_to_poll: Vec<Option<BoxedFuture<u32>>> = vec![];
+
+            loop {
+                for future in new_tasks_receiver.try_iter() {
+                    let index = tasks_to_poll.len();
+                    tasks_to_poll.push(Some(future));
+                    println!("[executor] adding new task @ {index}");
+                    tasks_sender.send(index).unwrap();
                 }
-                prt!("[executor] polling {index}");
 
-                let waker_data = WakerData::new(self.tasks_sender.clone(), index);
-                let boxed_waker_data = Box::new(waker_data);
-                let raw_waker_data = Box::into_raw(boxed_waker_data);
+                for index in tasks_receiver.try_iter() {
+                    if index >= tasks_to_poll.len() {
+                        panic!("index out of bounds");
+                    }
+                    prt!("[executor] polling {index}");
 
-                let raw_waker =
-                    RawWaker::new(raw_waker_data as *const WakerData as *const (), &VTABLE);
-                let waker = unsafe { Waker::from_raw(raw_waker) };
-                let mut cx = Context::from_waker(&waker);   
+                    let waker_data = WakerData::new(tasks_sender.clone(), index);
+                    let boxed_waker_data = Box::new(waker_data);
+                    let raw_waker_data = Box::into_raw(boxed_waker_data);
 
-                if let Some(task) = &mut self.tasks_to_poll[index] {
-                    if let Poll::Ready(res) = task.as_mut().poll(&mut cx) {
-                        println!("[executor] Received Result: {res}");
-                        self.tasks_to_poll[index] = None;
+                    let raw_waker =
+                        RawWaker::new(raw_waker_data as *const WakerData as *const (), &VTABLE);
+                    let waker = unsafe { Waker::from_raw(raw_waker) };
+                    let mut cx = Context::from_waker(&waker);
 
-                        if index == 0 {
-                            break 'main;
+                    if let Some(task) = &mut tasks_to_poll[index] {
+                        if let Poll::Ready(res) = task.as_mut().poll(&mut cx) {
+                            println!("[executor] Received {res} from {index}");
+                            tasks_to_poll[index] = None;
                         }
-
                     }
                 }
+                
+                
+                if thread_can_finish.load(Ordering::Relaxed) && tasks_to_poll.iter().all(|x| x.is_none()) {
+                    break;
+                }
             }
+        });
+
+        Executor {
+            new_tasks_sender,
+            can_finish,
+            running_thread
         }
+    }
+    
+    pub fn join (self) {
+        self.can_finish.store(true, Ordering::SeqCst);
+        self.running_thread.join().unwrap();
+    }
+
+    pub fn run<F: Future<Output = u32> + Send + 'static> (&self, f: F) {
+        self.new_tasks_sender.send(Box::pin(f)).unwrap();
     }
 }
 
@@ -111,20 +130,34 @@ impl Future for TimerFuture {
 
 
 fn main() {
-    Executor::default().block_on(Box::pin(async move {
-        println!("[main] Creating futures");
+    let executor = Executor::start();
+   
+    let create_task = |time, id| async move {
+        let fut = TimerFuture::new(time);
+        println!("[task {id}] created future");
 
-        let one = TimerFuture::new(250);
-        let two = TimerFuture::new(500);
-        let three = TimerFuture::new(750);
+        let start = Instant::now();
+        let res = fut.await;
+        let el = start.elapsed();
 
-        println!("[main] Created all");
+        println!("[task {id}] awaited future, got {res:?} in {el:?}");
 
-        let t = Instant::now();
-        let res = futures::join!(one, two, three);
-        let elapsed = t.elapsed();
-        println!("[main] Got {res:?} in {elapsed:?}");
+        res
+    };
 
-        0
-    }));
+    let task_1 = create_task(150, 1);
+    let task_2 = create_task(150, 2);
+    let task_3 = create_task(50, 3);
+    let task_4 = create_task(200, 4);
+    
+    let start = Instant::now();
+    executor.run(task_1);
+    executor.run(task_2);
+    executor.run(task_3);
+    executor.run(task_4);
+
+    println!("[main] created all tasks, joining executor");
+    executor.join();
+    let el = start.elapsed();
+    println!("[main] joined, took {el:?}");
 }
