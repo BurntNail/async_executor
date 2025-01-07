@@ -2,15 +2,20 @@ use std::any::Any;
 use std::collections::hash_map::Entry;
 use std::collections::HashMap;
 use std::future::Future;
-use std::sync::mpsc::{Sender, channel};
+use std::marker::PhantomData;
+use std::sync::mpsc::{Sender, channel, Receiver};
 use std::pin::Pin;
 use std::sync::Arc;
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::task::{RawWaker, Waker, Context, Poll};
 use std::thread::JoinHandle;
 use std::time::{Instant, Duration};
-
 use waker::{WakerData, VTABLE};
+
+mod waker;
+
+pub type BoxedFuture<T> = Pin<Box<dyn Future<Output = T> + Send>>;
+pub type ErasedFuture = BoxedFuture<Box<dyn Any + Send>>;
 
 #[derive(Default)]
 pub struct IdGenerator {
@@ -46,12 +51,6 @@ impl Id {
     }
 }
 
-mod waker;
-
-pub type BoxedFuture<T> = Pin<Box<dyn Future<Output = T> + Send>>;
-pub type ErasedFuture = BoxedFuture<Box<dyn Any>>;
-
-
 #[macro_export]
 macro_rules! prt {
     ($($arg:tt)*) => {{
@@ -61,30 +60,34 @@ macro_rules! prt {
     }};
 }
 
-pub struct Executor {
-    new_tasks_sender: Sender<ErasedFuture>,
+pub struct Running;
+pub struct Finished;
+
+pub struct Executor<Stage> {
+    new_tasks_sender: Sender<(Id, ErasedFuture)>,
+    results_rx: Receiver<(Id, Box<dyn Any + Send>)>,
+    results_cache: HashMap<Id, Box<dyn Any + Send>>,
+    id_generator: IdGenerator,
     can_finish: Arc<AtomicBool>,
-    running_thread: JoinHandle<()>,
+    running_thread: Option<JoinHandle<()>>,
+    _pd: PhantomData<Stage>
 }
 
-impl Executor {
-    pub fn start() -> Executor {
+impl Executor<Running> {
+    pub fn start() -> Self {
         let (new_tasks_sender, new_tasks_receiver) = channel();
+        let (results_sender, results_rx) = channel();
         let can_finish = Arc::new(AtomicBool::new(false));
 
         let thread_can_finish = can_finish.clone();
         let running_thread = std::thread::spawn(move || {
             let (tasks_sender, tasks_receiver) = channel();
             let mut tasks_to_poll: HashMap<Id, ErasedFuture> = HashMap::new();
-            let mut id = IdGenerator::default();
-
             loop {
-                for future in new_tasks_receiver.try_iter() {
-                    if let Some(index) = id.next() {
-                        tasks_to_poll.insert(index, future);
-                        println!("[executor] adding new task @ {index:?}");
-                        tasks_sender.send(index).unwrap();
-                    }
+                for (index, future) in new_tasks_receiver.try_iter() {
+                    tasks_to_poll.insert(index, future);
+                    println!("[executor] adding new task @ {index:?}");
+                    tasks_sender.send(index).unwrap();
                 }
 
                 for index in tasks_receiver.try_iter() {
@@ -100,9 +103,10 @@ impl Executor {
                                 RawWaker::new(raw_waker_data as *const WakerData as *const (), &VTABLE);
                             let waker = unsafe { Waker::from_raw(raw_waker) };
                             let mut cx = Context::from_waker(&waker);
-                            
-                            if let Poll::Ready(_res) = occ.get_mut().as_mut().poll(&mut cx) {
+
+                            if let Poll::Ready(res) = occ.get_mut().as_mut().poll(&mut cx) {
                                 println!("[executor] Finished {index:?}");
+                                let _= results_sender.send((index, res));
                                 occ.remove();
                             }
                         }
@@ -111,8 +115,8 @@ impl Executor {
                         }
                     }
                 }
-                
-                
+
+
                 if thread_can_finish.load(Ordering::Relaxed) && tasks_to_poll.is_empty() {
                     break;
                 }
@@ -121,51 +125,102 @@ impl Executor {
 
         Executor {
             new_tasks_sender,
+            results_rx,
+            results_cache: HashMap::new(),
+            id_generator: IdGenerator::default(),
             can_finish,
-            running_thread
+            running_thread: Some(running_thread),
+            _pd: PhantomData
         }
     }
-    
-    pub fn join (self) {
+
+    pub fn join (mut self) -> Executor<Finished> {
         self.can_finish.store(true, Ordering::SeqCst);
-        self.running_thread.join().unwrap();
+        self.running_thread.take().unwrap().join().unwrap();
+        
+        Executor {
+            running_thread: None,
+            _pd: PhantomData,
+            
+            new_tasks_sender: self.new_tasks_sender,
+            results_rx: self.results_rx,
+            results_cache: self.results_cache,
+            id_generator: self.id_generator,
+            can_finish: self.can_finish
+        }
     }
 
-    pub fn run<F: Future + Send + 'static> (&self, f: F) {
-        self.new_tasks_sender.send(Box::pin(async {
-            let res = f.await;
-            let boxed: Box<dyn Any> = Box::new(res);
-            boxed
-        })).unwrap();
+    pub fn run<F: Future + Send + 'static> (&mut self, f: F) -> Option<Id>
+    where F::Output: Send
+    {
+        let id = self.id_generator.next();
+        if let Some(id) = id {
+            self.new_tasks_sender.send((id, Box::pin(async {
+                let res = f.await;
+                let boxed: Box<dyn Any + Send> = Box::new(res);
+                boxed
+            }))).unwrap();
+        }
+        id
+    }
+}
+
+impl<Stage> Executor<Stage> {
+    pub fn take_result<T: 'static> (&mut self, id: &Id) -> FutureResult<T> {
+        self.results_cache.extend(self.results_rx.try_iter());
+        match self.results_cache.remove(id) {
+            None => FutureResult::NonExistent,
+            Some(x) => match x.downcast() {
+                Ok(t) => FutureResult::Expected(*t),
+                Err(b) => FutureResult::Other(b),
+            }
+        }
+    }
+}
+
+#[derive(Debug)]
+pub enum FutureResult<T> {
+    Expected(T),
+    Other(Box<dyn Any>),
+    NonExistent
+}
+
+impl<T> FutureResult<T> {
+    pub fn unwrap (self) -> T {
+        match self {
+            Self::Expected(e) => e,
+            Self::Other(_) => panic!("failed to unwrap FR as wrong type"),
+            Self::NonExistent => panic!("failed to unwrap FR as `None`")
+        }
     }
 }
 
 struct TimerFuture {
     start: Option<Instant>,
     time: Duration,
-    timeout_ms: u32
+    timeout_ms: u64
 }
 
 impl TimerFuture {
-    pub fn new (timeout_ms: u32) -> Self {
+    pub fn new (timeout_ms: u64) -> Self {
         Self {
             start: None,
             timeout_ms,
-            time: Duration::from_millis(timeout_ms as u64)
+            time: Duration::from_millis(timeout_ms)
         }
     }
 }
 
 impl Future for TimerFuture {
-    type Output = ();
+    type Output = u64;
 
-    fn poll(mut self: Pin<&mut Self>, cx: &mut Context<'_>) -> Poll<Self::Output> {
+    fn poll(mut self: Pin<&mut Self>, cx: &mut Context<'_>) -> Poll<Self::Output> {        
         match self.start {
             None => {
                 self.start = Some(Instant::now());
             },
             Some(x) => if x.elapsed() >= self.time {
-                return Poll::Ready(());
+                return Poll::Ready(self.timeout_ms);
             }
         }
 
@@ -176,34 +231,40 @@ impl Future for TimerFuture {
 
 
 fn main() {
-    let executor = Executor::start();
+    let mut executor = Executor::start();
    
-    let create_task = |time, id| async move {
+    let create_task = |time, local_id| async move {
         let fut = TimerFuture::new(time);
-        println!("[task {id}] created future");
+        println!("[task {local_id}] created future");
 
         let start = Instant::now();
         let res = fut.await;
         let el = start.elapsed();
 
-        println!("[task {id}] awaited future, got {res:?} in {el:?}");
+        println!("[task {local_id}] awaited future in {el:?}");
 
-        String::from("yay")
+        res
     };
 
-    let task_1 = create_task(150, 1);
-    let task_2 = create_task(150, 2);
-    let task_3 = create_task(50, 3);
-    let task_4 = create_task(200, 4);
-    
     let start = Instant::now();
-    executor.run(task_1);
-    executor.run(task_2);
-    executor.run(task_3);
-    executor.run(task_4);
+    let id1 = executor.run(create_task(150, 1)).unwrap();
+    let id2 = executor.run(create_task(150, 2)).unwrap();
+    let id3 = executor.run(create_task(50, 3)).unwrap();
+    let id4 = executor.run(create_task(200, 4)).unwrap();
+    
+    std::thread::sleep(Duration::from_millis(75));
+    
+    // let fail: u32 = executor.take_result(&id4).unwrap();
 
     println!("[main] created all tasks, joining executor");
-    executor.join();
+    let mut executor = executor.join();
     let el = start.elapsed();
     println!("[main] joined, took {el:?}");
+
+    let res1: u64 = executor.take_result(&id1).unwrap();
+    let res2: u64 = executor.take_result(&id2).unwrap();
+    let res3: u64 = executor.take_result(&id3).unwrap();
+    let res4: u64 = executor.take_result(&id4).unwrap();
+    
+    println!("[main] got results ({res1:?},{res2:?},{res3:?},{res4:?})");
 }
