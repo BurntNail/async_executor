@@ -1,26 +1,20 @@
 use std::{
     sync::mpsc::Sender, task::{RawWaker, RawWakerVTable}
 };
-use crate::prt;
+use crate::{prt, Id};
 
-#[derive(Debug)]
+#[derive(Debug, Clone)]
 pub struct WakerData {
-    tasks_sender: Sender<usize>,
-    id: usize,
+    tasks_sender: Sender<Id>,
+    id: Id,
 }
 
 impl WakerData {
-    pub fn new (tasks_sender: Sender<usize>, id: usize) -> Self {
-        prt!("[wakerdata] create new {id}");
+    pub fn new (tasks_sender: Sender<Id>, id: Id) -> Self {
+        prt!("[wakerdata] create new {id:?}");
         Self {
             tasks_sender, id
         }
-    }
-}
-
-impl Clone for WakerData {
-    fn clone(&self) -> Self {
-        Self { tasks_sender: self.tasks_sender.clone(), id: self.id }
     }
 }
 
@@ -40,7 +34,7 @@ unsafe fn clone (data: *const ()) -> RawWaker {
 
 unsafe fn wake(data: *const ()) {
     let data = std::ptr::read(data as *const WakerData);
-    prt!("[vtable] wake O {}", data.id);
+    prt!("[vtable] wake O {:?}", data.id);
     data.tasks_sender
         .send(data.id)
         .expect("unable to send task id to executor");
@@ -49,7 +43,7 @@ unsafe fn wake(data: *const ()) {
 
 unsafe fn wake_by_ref(data: *const ()) {
     let data = std::ptr::read(data as *const WakerData);
-    prt!("[vtable] wake R {}", data.id);
+    prt!("[vtable] wake R {:?}", data.id);
     data.tasks_sender
         .send(data.id)
         .expect("unable to send task id to executor");

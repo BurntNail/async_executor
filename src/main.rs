@@ -1,5 +1,6 @@
 use std::any::Any;
-use std::fmt::Debug;
+use std::collections::hash_map::Entry;
+use std::collections::HashMap;
 use std::future::Future;
 use std::sync::mpsc::{Sender, channel};
 use std::pin::Pin;
@@ -10,6 +11,40 @@ use std::thread::JoinHandle;
 use std::time::{Instant, Duration};
 
 use waker::{WakerData, VTABLE};
+
+#[derive(Default)]
+pub struct IdGenerator {
+    next: usize
+}
+
+impl Iterator for IdGenerator {
+    type Item = Id;
+
+    fn next(&mut self) -> Option<Self::Item> {
+        if self.next == usize::MAX {
+            None
+        } else {
+            let ret = Some(Id {
+                index: self.next
+            });
+            self.next += 1;
+            ret
+        }
+    }
+}
+
+#[derive(Copy, Clone, Default, Hash, Debug, Eq, PartialEq)]
+pub struct Id {
+    index: usize,
+}
+
+impl Id {
+    pub fn next (&self) -> Self {
+        Self {
+            index: self.index + 1
+        }
+    }
+}
 
 mod waker;
 
@@ -40,41 +75,45 @@ impl Executor {
         let thread_can_finish = can_finish.clone();
         let running_thread = std::thread::spawn(move || {
             let (tasks_sender, tasks_receiver) = channel();
-            let mut tasks_to_poll: Vec<Option<ErasedFuture>> = vec![];
+            let mut tasks_to_poll: HashMap<Id, ErasedFuture> = HashMap::new();
+            let mut id = IdGenerator::default();
 
             loop {
                 for future in new_tasks_receiver.try_iter() {
-                    let index = tasks_to_poll.len();
-                    tasks_to_poll.push(Some(future));
-                    println!("[executor] adding new task @ {index}");
-                    tasks_sender.send(index).unwrap();
+                    if let Some(index) = id.next() {
+                        tasks_to_poll.insert(index, future);
+                        println!("[executor] adding new task @ {index:?}");
+                        tasks_sender.send(index).unwrap();
+                    }
                 }
 
                 for index in tasks_receiver.try_iter() {
-                    if index >= tasks_to_poll.len() {
-                        panic!("index out of bounds");
-                    }
-                    prt!("[executor] polling {index}");
+                    match tasks_to_poll.entry(index) {
+                        Entry::Occupied(mut occ) => {
+                            prt!("[executor] polling {index:?}");
 
-                    let waker_data = WakerData::new(tasks_sender.clone(), index);
-                    let boxed_waker_data = Box::new(waker_data);
-                    let raw_waker_data = Box::into_raw(boxed_waker_data);
+                            let waker_data = WakerData::new(tasks_sender.clone(), index);
+                            let boxed_waker_data = Box::new(waker_data);
+                            let raw_waker_data = Box::into_raw(boxed_waker_data);
 
-                    let raw_waker =
-                        RawWaker::new(raw_waker_data as *const WakerData as *const (), &VTABLE);
-                    let waker = unsafe { Waker::from_raw(raw_waker) };
-                    let mut cx = Context::from_waker(&waker);
-
-                    if let Some(task) = &mut tasks_to_poll[index] {
-                        if let Poll::Ready(res) = task.as_mut().poll(&mut cx) {
-                            println!("[executor] Finished {index}");
-                            tasks_to_poll[index] = None;
+                            let raw_waker =
+                                RawWaker::new(raw_waker_data as *const WakerData as *const (), &VTABLE);
+                            let waker = unsafe { Waker::from_raw(raw_waker) };
+                            let mut cx = Context::from_waker(&waker);
+                            
+                            if let Poll::Ready(_res) = occ.get_mut().as_mut().poll(&mut cx) {
+                                println!("[executor] Finished {index:?}");
+                                occ.remove();
+                            }
+                        }
+                        Entry::Vacant(_) => {
+                            eprintln!("Tried to poll non-existent future index: {index:?}");
                         }
                     }
                 }
                 
                 
-                if thread_can_finish.load(Ordering::Relaxed) && tasks_to_poll.iter().all(|x| x.is_none()) {
+                if thread_can_finish.load(Ordering::Relaxed) && tasks_to_poll.is_empty() {
                     break;
                 }
             }
