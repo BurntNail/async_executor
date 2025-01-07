@@ -8,8 +8,10 @@ use std::thread::JoinHandle;
 use std::time::{Instant, Duration};
 
 use waker::{WakerData, VTABLE};
+use crate::task_runner::Pool;
 
 mod waker;
+mod task_runner;
 
 pub type BoxedFuture<T> = Pin<Box<dyn Future<Output = T> + Send>>;
 
@@ -38,6 +40,7 @@ impl Executor {
         let running_thread = std::thread::spawn(move || {
             let (tasks_sender, tasks_receiver) = channel();
             let mut tasks_to_poll: Vec<Option<BoxedFuture<u32>>> = vec![];
+            let pool = Pool::new::<16>();
 
             loop {
                 for future in new_tasks_receiver.try_iter() {
@@ -131,7 +134,7 @@ impl Future for TimerFuture {
 
 fn main() {
     let executor = Executor::start();
-   
+
     let create_task = |time, id| async move {
         let fut = TimerFuture::new(time);
         println!("[task {id}] created future");
@@ -149,7 +152,7 @@ fn main() {
     let task_2 = create_task(150, 2);
     let task_3 = create_task(50, 3);
     let task_4 = create_task(200, 4);
-    
+
     let start = Instant::now();
     executor.run(task_1);
     executor.run(task_2);

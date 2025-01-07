@@ -57,7 +57,5 @@ unsafe fn wake_by_ref(data: *const ()) {
 }
 
 unsafe fn drop (data: *const ()) {
-    let data = Box::from_raw(data as *mut WakerData);
-    prt!("[vtable] drop {data:?}");
-    std::mem::drop(data)
+    std::ptr::drop_in_place(data as *mut WakerData);
 }
