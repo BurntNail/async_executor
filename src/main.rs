@@ -1,3 +1,5 @@
+use std::any::Any;
+use std::fmt::Debug;
 use std::future::Future;
 use std::sync::mpsc::{Sender, channel};
 use std::pin::Pin;
@@ -12,6 +14,7 @@ use waker::{WakerData, VTABLE};
 mod waker;
 
 pub type BoxedFuture<T> = Pin<Box<dyn Future<Output = T> + Send>>;
+pub type ErasedFuture = BoxedFuture<Box<dyn Any>>;
 
 
 #[macro_export]
@@ -24,7 +27,7 @@ macro_rules! prt {
 }
 
 pub struct Executor {
-    new_tasks_sender: Sender<BoxedFuture<u32>>,
+    new_tasks_sender: Sender<ErasedFuture>,
     can_finish: Arc<AtomicBool>,
     running_thread: JoinHandle<()>,
 }
@@ -37,7 +40,7 @@ impl Executor {
         let thread_can_finish = can_finish.clone();
         let running_thread = std::thread::spawn(move || {
             let (tasks_sender, tasks_receiver) = channel();
-            let mut tasks_to_poll: Vec<Option<BoxedFuture<u32>>> = vec![];
+            let mut tasks_to_poll: Vec<Option<ErasedFuture>> = vec![];
 
             loop {
                 for future in new_tasks_receiver.try_iter() {
@@ -64,7 +67,7 @@ impl Executor {
 
                     if let Some(task) = &mut tasks_to_poll[index] {
                         if let Poll::Ready(res) = task.as_mut().poll(&mut cx) {
-                            println!("[executor] Received {res} from {index}");
+                            println!("[executor] Finished {index}");
                             tasks_to_poll[index] = None;
                         }
                     }
@@ -89,8 +92,12 @@ impl Executor {
         self.running_thread.join().unwrap();
     }
 
-    pub fn run<F: Future<Output = u32> + Send + 'static> (&self, f: F) {
-        self.new_tasks_sender.send(Box::pin(f)).unwrap();
+    pub fn run<F: Future + Send + 'static> (&self, f: F) {
+        self.new_tasks_sender.send(Box::pin(async {
+            let res = f.await;
+            let boxed: Box<dyn Any> = Box::new(res);
+            boxed
+        })).unwrap();
     }
 }
 
@@ -111,7 +118,7 @@ impl TimerFuture {
 }
 
 impl Future for TimerFuture {
-    type Output = u32;
+    type Output = ();
 
     fn poll(mut self: Pin<&mut Self>, cx: &mut Context<'_>) -> Poll<Self::Output> {
         match self.start {
@@ -119,7 +126,7 @@ impl Future for TimerFuture {
                 self.start = Some(Instant::now());
             },
             Some(x) => if x.elapsed() >= self.time {
-                return Poll::Ready(self.timeout_ms);
+                return Poll::Ready(());
             }
         }
 
@@ -142,7 +149,7 @@ fn main() {
 
         println!("[task {id}] awaited future, got {res:?} in {el:?}");
 
-        res
+        String::from("yay")
     };
 
     let task_1 = create_task(150, 1);
