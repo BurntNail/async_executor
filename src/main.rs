@@ -60,17 +60,18 @@ macro_rules! prt {
     }};
 }
 
-pub struct Running;
+pub struct Running {
+    can_finish: Arc<AtomicBool>,
+    running_thread: JoinHandle<()>,
+    id_generator: IdGenerator
+}
 pub struct Finished;
 
 pub struct Executor<Stage> {
     new_tasks_sender: Sender<(Id, ErasedFuture)>,
     results_rx: Receiver<(Id, Box<dyn Any + Send>)>,
     results_cache: HashMap<Id, Box<dyn Any + Send>>,
-    id_generator: IdGenerator,
-    can_finish: Arc<AtomicBool>,
-    running_thread: Option<JoinHandle<()>>,
-    _pd: PhantomData<Stage>
+    stage_details: Stage,
 }
 
 impl Executor<Running> {
@@ -127,33 +128,30 @@ impl Executor<Running> {
             new_tasks_sender,
             results_rx,
             results_cache: HashMap::new(),
-            id_generator: IdGenerator::default(),
-            can_finish,
-            running_thread: Some(running_thread),
-            _pd: PhantomData
+            stage_details: Running {
+                id_generator: IdGenerator::default(),
+                can_finish,
+                running_thread,
+            }
         }
     }
 
-    pub fn join (mut self) -> Executor<Finished> {
-        self.can_finish.store(true, Ordering::SeqCst);
-        self.running_thread.take().unwrap().join().unwrap();
+    pub fn join (self) -> Executor<Finished> {
+        self.stage_details.can_finish.store(true, Ordering::SeqCst);
+        self.stage_details.running_thread.join().unwrap();
         
         Executor {
-            running_thread: None,
-            _pd: PhantomData,
-            
             new_tasks_sender: self.new_tasks_sender,
             results_rx: self.results_rx,
             results_cache: self.results_cache,
-            id_generator: self.id_generator,
-            can_finish: self.can_finish
+            stage_details: Finished
         }
     }
 
     pub fn run<F: Future + Send + 'static> (&mut self, f: F) -> Option<Id>
     where F::Output: Send
     {
-        let id = self.id_generator.next();
+        let id = self.stage_details.id_generator.next();
         if let Some(id) = id {
             self.new_tasks_sender.send((id, Box::pin(async {
                 let res = f.await;
