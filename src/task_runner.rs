@@ -31,13 +31,13 @@ impl TaskRunner {
             let (poll_sender, poll_receiver) = channel::<Id>();
             let mut to_poll = HashMap::new();
             loop {
-                if thread_stop.load(Ordering::SeqCst) {
-                    break;
-                }
-                
                 for (id, fut) in task_receiver.try_iter() {
                     to_poll.insert(id, fut);
                     poll_sender.send(id).unwrap();
+                }
+
+                if thread_stop.load(Ordering::SeqCst) && to_poll.is_empty() {
+                    break;
                 }
                 
                 for id in poll_receiver.try_iter() {

@@ -2,11 +2,12 @@ use std::any::Any;
 use std::collections::HashMap;
 use std::future::Future;
 use std::pin::Pin;
-use std::task::{Context, Poll};
-use std::time::{Instant, Duration};
+use std::time::Instant;
+use crate::eg_futures::{slow_future, TimerFuture};
 use crate::task_runner::Pool;
 
 mod waker;
+mod eg_futures;
 mod task_runner;
 
 pub type Erased = Box<dyn Any + Send>;
@@ -135,43 +136,9 @@ impl<T> FutureResult<T> {
     pub fn unwrap (self) -> T {
         match self {
             Self::Expected(e) => e,
-            Self::Other(_) => panic!("failed to unwrap FR as wrong type"),
-            Self::NonExistent => panic!("failed to unwrap FR as `None`")
+            Self::Other(_) => panic!("failed to unwrap FutureResult as found wrong type"),
+            Self::NonExistent => panic!("failed to unwrap FutureResult as `None`")
         }
-    }
-}
-
-struct TimerFuture {
-    start: Option<Instant>,
-    time: Duration,
-    timeout_ms: u64
-}
-
-impl TimerFuture {
-    pub fn new (timeout_ms: u64) -> Self {
-        Self {
-            start: None,
-            timeout_ms,
-            time: Duration::from_millis(timeout_ms)
-        }
-    }
-}
-
-impl Future for TimerFuture {
-    type Output = u64;
-
-    fn poll(mut self: Pin<&mut Self>, cx: &mut Context<'_>) -> Poll<Self::Output> {
-        match self.start {
-            None => {
-                self.start = Some(Instant::now());
-            },
-            Some(x) => if x.elapsed() >= self.time {
-                return Poll::Ready(self.timeout_ms);
-            }
-        }
-
-        cx.waker().wake_by_ref();
-        Poll::Pending
     }
 }
 
@@ -198,6 +165,8 @@ fn main() {
     let id3 = executor.run(create_task(50, 3)).unwrap();
     let id4 = executor.run(create_task(200, 4)).unwrap();
     
+    let fib = executor.run(slow_future(175)).unwrap();
+    
     // let fail: u32 = executor.take_result(&id4).unwrap();
 
     println!("[main] created all tasks, joining executor");
@@ -209,6 +178,8 @@ fn main() {
     let res2: u64 = executor.take_result(&id2).unwrap();
     let res3: u64 = executor.take_result(&id3).unwrap();
     let res4: u64 = executor.take_result(&id4).unwrap();
+    let fib: u64 = executor.take_result(&fib).unwrap();
 
     println!("[main] got results ({res1:?},{res2:?},{res3:?},{res4:?})");
+    println!("[main] slow calc is {fib:?}");
 }
