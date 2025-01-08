@@ -5,15 +5,15 @@ use crate::{prt, Id};
 
 #[derive(Debug, Clone)]
 pub struct WakerData {
-    tasks_sender: Sender<Id>,
+    poll_me: Sender<Id>,
     id: Id,
 }
 
 impl WakerData {
-    pub fn new (tasks_sender: Sender<Id>, id: Id) -> Self {
+    pub fn new (poll_me: Sender<Id>, id: Id) -> Self {
         prt!("[wakerdata] create new {id:?}");
         Self {
-            tasks_sender, id
+            poll_me, id
         }
     }
 }
@@ -35,7 +35,7 @@ unsafe fn clone (data: *const ()) -> RawWaker {
 unsafe fn wake(data: *const ()) {
     let data = std::ptr::read(data as *const WakerData);
     prt!("[vtable] wake O {:?}", data.id);
-    data.tasks_sender
+    data.poll_me
         .send(data.id)
         .expect("unable to send task id to executor");
     std::mem::forget(data);
@@ -44,7 +44,7 @@ unsafe fn wake(data: *const ()) {
 unsafe fn wake_by_ref(data: *const ()) {
     let data = std::ptr::read(data as *const WakerData);
     prt!("[vtable] wake R {:?}", data.id);
-    data.tasks_sender
+    data.poll_me
         .send(data.id)
         .expect("unable to send task id to executor");
     std::mem::forget(data);

@@ -1,116 +1,128 @@
-use std::sync::{Arc, Mutex};
-use std::sync::atomic::{AtomicBool, Ordering};
-use std::sync::mpsc::{channel, Sender};
-use std::task::{Context, Poll, Waker};
+use std::collections::hash_map::Entry;
+use std::collections::HashMap;
+use std::sync::{Arc};
+use std::sync::atomic::{AtomicBool, AtomicUsize, Ordering};
+use std::sync::mpsc::{channel, Receiver, Sender};
+use std::task::{Context, Poll, RawWaker, Waker};
 use std::thread::JoinHandle;
-use crate::BoxedFuture;
+use crate::{BoxedFuture, Erased, Id};
+use crate::waker::{WakerData, VTABLE};
 
 pub struct TaskRunner {
     handle: JoinHandle<()>,
-    task_sender: Sender<(BoxedFuture<u32>, Waker)>,
-    is_running: Arc<AtomicBool>,
+    task_sender: Sender<(Id, BoxedFuture<Erased>)>,
+    current_tasks: Arc<AtomicUsize>,
     needs_to_stop: Arc<AtomicBool>,
-    result: Arc<Mutex<Option<Poll<u32>>>>
+    result_receiver: Receiver<(Id, Erased)>
 }
 
 impl TaskRunner {
     pub fn new () -> Self {
-        let is_running = Arc::new(AtomicBool::new(false));
+        let current_tasks = Arc::new(AtomicUsize::new(0));
         let needs_to_stop = Arc::new(AtomicBool::new(false));
-        let result = Arc::new(Mutex::new(None));
-        let (task_sender, task_receiver) = channel::<(BoxedFuture<u32>, Waker)>();
+        let (task_sender, task_receiver) = channel::<(Id, BoxedFuture<Erased>)>();
+        let (result_sender, result_receiver) = channel();
         
         
-        let thread_is_running = is_running.clone();
+        let thread_current_tasks = current_tasks.clone();
         let thread_stop = needs_to_stop.clone();
-        let thread_result = result.clone();
         
         let handle = std::thread::spawn(move || {
+            let (poll_sender, poll_receiver) = channel::<Id>();
+            let mut to_poll = HashMap::new();
             loop {
                 if thread_stop.load(Ordering::SeqCst) {
                     break;
                 }
                 
-                for (mut task, waker) in task_receiver.try_iter() {
-                    thread_is_running.store(true, Ordering::SeqCst);
-                    
-                    let mut cx = Context::from_waker(&waker);
-                    let res = task.as_mut().poll(&mut cx);
-                    *thread_result.lock().unwrap() = Some(res);
-
-                    thread_is_running.store(false, Ordering::SeqCst);
+                for (id, fut) in task_receiver.try_iter() {
+                    to_poll.insert(id, fut);
+                    poll_sender.send(id).unwrap();
                 }
+                
+                for id in poll_receiver.try_iter() {
+                    match to_poll.entry(id) {
+                        Entry::Occupied(mut occ) => {
+                            
+                            let waker_data = WakerData::new(poll_sender.clone(), id);
+                            let boxed_waker_data = Box::new(waker_data);
+                            let raw_waker_data = Box::into_raw(boxed_waker_data);
+
+                            let raw_waker =
+                                RawWaker::new(raw_waker_data as *const WakerData as *const (), &VTABLE);
+                            let waker = unsafe { Waker::from_raw(raw_waker) };
+                            let mut cx = Context::from_waker(&waker);
+
+                            if let Poll::Ready(res) = occ.get_mut().as_mut().poll(&mut cx) {
+                                let _ = result_sender.send((id, res));
+                                drop(occ.remove());
+                            }
+                        },
+                        Entry::Vacant(_) => eprintln!("[task runner] tried to poll non-existent task")
+                    }
+                }
+                
+                thread_current_tasks.store(to_poll.len(), Ordering::SeqCst);
             }
         });
         
         Self {
             handle,
-            is_running,
+            current_tasks,
             needs_to_stop,
             task_sender,
-            result
+            result_receiver
         }
     }
     
-    pub fn is_running (&self) -> bool {
-        self.is_running.load(Ordering::SeqCst)
+    pub fn current_number_of_tasks(&self) -> usize {
+        self.current_tasks.load(Ordering::SeqCst)
     }
     
-    pub fn take_result (&mut self) -> Option<Poll<u32>> {
-        self.result.lock().unwrap().take()
+    pub fn take_results(&mut self) -> impl Iterator<Item = (Id, Erased)> + use<'_> {
+        self.result_receiver.try_iter()
     }
     
-    pub fn send_task (&self, fut: BoxedFuture<u32>, waker: Waker) {
-        self.task_sender.send((fut, waker)).unwrap();
+    pub fn send_task (&self, id: Id, fut: BoxedFuture<Erased>) {
+        self.task_sender.send((id, fut)).unwrap();
     }
     
-    pub fn stop (self) {
+    pub fn join(self) -> impl Iterator<Item = (Id, Erased)> {
         self.needs_to_stop.store(true, Ordering::SeqCst);
         self.handle.join().unwrap();
+        self.result_receiver.into_iter()
     }
 }
 
 pub struct Pool {
-    runners: Vec<(TaskRunner, Option<usize>)>,
+    runners: Vec<TaskRunner>,
 }
 
 impl Pool {
     pub fn new<const N: usize> () -> Self {
         let mut v = Vec::with_capacity(N);
         for _ in 0..N {
-            v.push((TaskRunner::new(), None));
+            v.push(TaskRunner::new());
         }
         Self {
             runners: v,
         }
     }
     
-    pub fn run_future(&mut self, f: BoxedFuture<u32>, waker: Waker, index: usize) {
-        'outer: loop {
-            for (runner, task_index) in self.runners.iter_mut() {
-                if !runner.is_running() {
-                    runner.send_task(f, waker);
-                    *task_index = Some(index);
-                    
-                    
-                    break 'outer;
-                }
-            }
-        }
+    pub fn run_future(&mut self, id: Id, f: BoxedFuture<Erased>) {
+        let (runner_index, _) = self.runners.iter().enumerate().map(|(i, runner)| (i, runner.current_number_of_tasks())).min_by_key(|(_, n)| *n).unwrap();
+        self.runners[runner_index].send_task(id, f);
     }
     
-    pub fn collect_results (&mut self) -> Vec<(Poll<u32>, usize)> {
-        self.runners.iter_mut().filter_map(|(runner, task_index)| {
-            if let Some(index) = task_index {
-                if let Some(res) = runner.take_result() {
-                    let owned_index = *index;
-                    Some((res, owned_index))
-                } else {
-                    None
-                }
-            } else {
-                None
-            }
-        }).collect()
+    pub fn collect_results (&mut self) -> impl Iterator<Item = (Id, Erased)> + use<'_> {
+        self.runners.iter_mut().flat_map(|runner| {
+            runner.take_results()
+        })
+    }
+    
+    pub fn join (self) -> impl Iterator<Item = (Id, Erased)> {
+        self.runners.into_iter().flat_map(|runner| {
+            runner.join()
+        })
     }
 }
