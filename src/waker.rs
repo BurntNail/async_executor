@@ -1,7 +1,8 @@
 use std::{
     sync::mpsc::Sender, task::{RawWaker, RawWakerVTable}
 };
-use crate::{prt, Id};
+use crate::{prt};
+use crate::ids::Id;
 
 #[derive(Debug, Clone)]
 pub struct WakerData {

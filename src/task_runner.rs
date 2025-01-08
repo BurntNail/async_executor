@@ -5,7 +5,8 @@ use std::sync::atomic::{AtomicBool, AtomicUsize, Ordering};
 use std::sync::mpsc::{channel, Receiver, Sender};
 use std::task::{Context, Poll, RawWaker, Waker};
 use std::thread::JoinHandle;
-use crate::{BoxedFuture, Erased, Id};
+use crate::executor::{BoxedFuture, Erased};
+use crate::ids::Id;
 use crate::waker::{WakerData, VTABLE};
 
 pub struct TaskRunner {
@@ -22,7 +23,6 @@ impl TaskRunner {
         let needs_to_stop = Arc::new(AtomicBool::new(false));
         let (task_sender, task_receiver) = channel::<(Id, BoxedFuture<Erased>)>();
         let (result_sender, result_receiver) = channel();
-        
         
         let thread_current_tasks = current_tasks.clone();
         let thread_stop = needs_to_stop.clone();
@@ -43,7 +43,6 @@ impl TaskRunner {
                 for id in poll_receiver.try_iter() {
                     match to_poll.entry(id) {
                         Entry::Occupied(mut occ) => {
-                            
                             let waker_data = WakerData::new(poll_sender.clone(), id);
                             let boxed_waker_data = Box::new(waker_data);
                             let raw_waker_data = Box::into_raw(boxed_waker_data);
