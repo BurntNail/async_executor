@@ -8,6 +8,7 @@ use std::sync::mpsc::{channel, Receiver, Sender};
 use std::sync::Arc;
 use std::task::{Context, Poll, RawWaker, Waker};
 use std::thread::JoinHandle;
+use crate::prt;
 
 pub struct TaskRunner {
     handle: JoinHandle<()>,
@@ -107,11 +108,11 @@ impl Pool {
             .map(|(i, runner)| (i, runner.current_number_of_tasks()))
             .min_by_key(|(_, n)| *n)
             .unwrap();
-        println!("sending task to {runner_index}");
+        prt!("[pool] sending task to {runner_index}");
         self.runners[runner_index].send_task(id, f);
     }
 
-    pub fn collect_results(&mut self) -> impl Iterator<Item = (Id, Erased)> + use<'_> {
+    pub fn collect_results(&self) -> impl Iterator<Item = (Id, Erased)> + use<'_> {
         self.runners
             .iter()
             .flat_map(TaskRunner::take_results)
