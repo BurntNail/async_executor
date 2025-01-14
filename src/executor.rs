@@ -1,10 +1,10 @@
+use crate::executor::sealed::CanUseCannotImplement;
+use crate::ids::{Id, IdGenerator};
+use crate::task_runner::Pool;
 use std::any::Any;
 use std::collections::HashMap;
 use std::future::Future;
 use std::pin::Pin;
-use crate::executor::sealed::CanUseCannotImplement;
-use crate::ids::{Id, IdGenerator};
-use crate::task_runner::Pool;
 
 pub type Erased = Box<dyn Any + Send>;
 pub type BoxedFuture<T> = Pin<Box<dyn Future<Output = T> + Send>>;
@@ -21,7 +21,7 @@ impl<T: CanUseCannotImplement> ExecutorStage for T {}
 
 pub struct Running {
     pool: Pool,
-    id_generator: IdGenerator
+    id_generator: IdGenerator,
 }
 pub struct Finished;
 
@@ -35,55 +35,60 @@ impl Executor<Running> {
         Executor {
             results_cache: HashMap::new(),
             stage_details: Running {
-                pool: Pool::new::<16>(),
-                id_generator: IdGenerator::default()
-            }
+                pool: Pool::new(16),
+                id_generator: IdGenerator::default(),
+            },
         }
     }
 
-    pub fn run<F: Future + Send + 'static> (&mut self, f: F) -> Option<Id>
-    where F::Output: Send
+    pub fn run<F: Future + Send + 'static>(&mut self, f: F) -> Option<Id>
+    where
+        F::Output: Send,
     {
         let id = self.stage_details.id_generator.next();
         if let Some(id) = id {
-            self.stage_details.pool.run_future(id, Box::pin(async {
-                let res = f.await;
-                let erased: Erased = Box::new(res);
-                erased
-            }));
+            self.stage_details.pool.run_future(
+                id,
+                Box::pin(async {
+                    let res = f.await;
+                    let erased: Erased = Box::new(res);
+                    erased
+                }),
+            );
         }
         id
     }
 
-    pub fn take_result<T: 'static> (&mut self, id: &Id) -> FutureResult<T> {
-        self.results_cache.extend(self.stage_details.pool.collect_results());
+    pub fn take_result<T: 'static>(&mut self, id: &Id) -> FutureResult<T> {
+        self.results_cache
+            .extend(self.stage_details.pool.collect_results());
         match self.results_cache.remove(id) {
             None => FutureResult::NonExistent,
             Some(x) => match x.downcast() {
                 Ok(t) => FutureResult::Expected(*t),
                 Err(b) => FutureResult::Other(b),
-            }
+            },
         }
     }
 
-    pub fn join (mut self) -> Executor<Finished> {
+    pub fn join(mut self) -> Executor<Finished> {
         self.results_cache.extend(self.stage_details.pool.join());
 
         Executor {
             results_cache: self.results_cache,
-            stage_details: Finished
+            stage_details: Finished,
         }
     }
 }
 
 impl Executor<Finished> {
-    pub fn take_result<T: 'static> (&mut self, id: &Id) -> FutureResult<T> {
+    pub fn take_result<T: 'static>(&mut self, id: &Id) -> FutureResult<T> {
         match self.results_cache.remove(id) {
             None => FutureResult::NonExistent,
             Some(x) => match x.downcast() {
                 Ok(t) => FutureResult::Expected(*t),
                 Err(b) => FutureResult::Other(b),
-            }
+            },
         }
     }
 }
@@ -93,15 +98,15 @@ pub enum FutureResult<T> {
     Expected(T),
     #[allow(dead_code)]
     Other(Box<dyn Any>),
-    NonExistent
+    NonExistent,
 }
 
 impl<T> FutureResult<T> {
-    pub fn unwrap (self) -> T {
+    pub fn unwrap(self) -> T {
         match self {
             Self::Expected(e) => e,
             Self::Other(_) => panic!("failed to unwrap FutureResult as found wrong type"),
-            Self::NonExistent => panic!("failed to unwrap FutureResult as `None`")
+            Self::NonExistent => panic!("failed to unwrap FutureResult as `None`"),
         }
     }
 }
@@ -110,7 +115,7 @@ impl<T> From<FutureResult<T>> for Option<T> {
     fn from(value: FutureResult<T>) -> Self {
         match value {
             FutureResult::Expected(x) => Some(x),
-            _ => None
+            _ => None,
         }
     }
 }

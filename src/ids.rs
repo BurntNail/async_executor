@@ -1,6 +1,6 @@
 #[derive(Default)]
 pub struct IdGenerator {
-    next: usize
+    next: usize,
 }
 
 impl Iterator for IdGenerator {
@@ -9,18 +9,16 @@ impl Iterator for IdGenerator {
     fn next(&mut self) -> Option<Self::Item> {
         match self.next.checked_add(1) {
             Some(new) => {
-                let ret = Some(Id {
-                    index: self.next
-                });
+                let ret = Some(Id { index: self.next });
                 self.next = new;
                 ret
-            },
-            None => None
+            }
+            None => None,
         }
     }
 }
 
-#[derive(Copy, Clone, Default, Hash, Debug, Eq, PartialEq)]
+#[derive(Copy, Clone, Debug, Hash, Eq, PartialEq)]
 pub struct Id {
     index: usize,
 }
