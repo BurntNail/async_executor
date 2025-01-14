@@ -11,7 +11,7 @@ pub struct TimerFuture {
 }
 
 impl TimerFuture {
-    pub fn new(timeout_ms: u64) -> Self {
+    pub const fn new(timeout_ms: u64) -> Self {
         Self {
             start: None,
             timeout_ms,
@@ -55,7 +55,7 @@ impl Future for TimerFuture {
     }
 }
 
-pub fn sleep(ms: u64) -> TimerFuture {
+pub const fn sleep(ms: u64) -> TimerFuture {
     TimerFuture::new(ms)
 }
 

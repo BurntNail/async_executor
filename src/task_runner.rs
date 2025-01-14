@@ -58,27 +58,21 @@ impl TaskRunner {
                             }
                         }
                         Entry::Vacant(_) => {
-                            eprintln!("[task runner] tried to poll non-existent task")
+                            eprintln!("[task runner] tried to poll non-existent task");
                         }
                     }
                 }
             }
         });
 
-        Self {
-            handle,
-            current_tasks,
-            needs_to_stop,
-            task_sender,
-            result_receiver,
-        }
+        Self { handle, task_sender, current_tasks, needs_to_stop, result_receiver }
     }
 
     pub fn current_number_of_tasks(&self) -> usize {
         self.current_tasks.load(Ordering::Relaxed)
     }
 
-    pub fn take_results(&mut self) -> impl Iterator<Item = (Id, Erased)> + use<'_> {
+    pub fn take_results(&self) -> impl Iterator<Item = (Id, Erased)> + use<'_> {
         self.result_receiver.try_iter()
     }
 
@@ -105,7 +99,7 @@ impl Pool {
         }
     }
 
-    pub fn run_future(&mut self, id: Id, f: BoxedFuture<Erased>) {
+    pub fn run_future(&self, id: Id, f: BoxedFuture<Erased>) {
         let (runner_index, _) = self
             .runners
             .iter()
@@ -119,11 +113,11 @@ impl Pool {
 
     pub fn collect_results(&mut self) -> impl Iterator<Item = (Id, Erased)> + use<'_> {
         self.runners
-            .iter_mut()
-            .flat_map(|runner| runner.take_results())
+            .iter()
+            .flat_map(TaskRunner::take_results)
     }
 
     pub fn join(self) -> impl Iterator<Item = (Id, Erased)> {
-        self.runners.into_iter().flat_map(|runner| runner.join())
+        self.runners.into_iter().flat_map(TaskRunner::join)
     }
 }

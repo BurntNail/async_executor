@@ -32,7 +32,7 @@ pub struct Executor<Stage: ExecutorStage> {
 
 impl Executor<Running> {
     pub fn start() -> Self {
-        Executor {
+        Self {
             results_cache: HashMap::new(),
             stage_details: Running {
                 pool: Pool::new(16),
@@ -59,16 +59,13 @@ impl Executor<Running> {
         id
     }
 
-    pub fn take_result<T: 'static>(&mut self, id: &Id) -> FutureResult<T> {
+    pub fn take_result<T: 'static>(&mut self, id: Id) -> FutureResult<T> {
         self.results_cache
             .extend(self.stage_details.pool.collect_results());
-        match self.results_cache.remove(id) {
-            None => FutureResult::NonExistent,
-            Some(x) => match x.downcast() {
-                Ok(t) => FutureResult::Expected(*t),
-                Err(b) => FutureResult::Other(b),
-            },
-        }
+        self.results_cache.remove(&id).map_or_else(|| FutureResult::NonExistent, |x| match x.downcast() {
+            Ok(t) => FutureResult::Expected(*t),
+            Err(b) => FutureResult::Other(b),
+        })
     }
 
     pub fn join(mut self) -> Executor<Finished> {
@@ -82,14 +79,11 @@ impl Executor<Running> {
 }
 
 impl Executor<Finished> {
-    pub fn take_result<T: 'static>(&mut self, id: &Id) -> FutureResult<T> {
-        match self.results_cache.remove(id) {
-            None => FutureResult::NonExistent,
-            Some(x) => match x.downcast() {
-                Ok(t) => FutureResult::Expected(*t),
-                Err(b) => FutureResult::Other(b),
-            },
-        }
+    pub fn take_result<T: 'static>(&mut self, id: Id) -> FutureResult<T> {
+        self.results_cache.remove(&id).map_or_else(|| FutureResult::NonExistent, |x| match x.downcast() {
+            Ok(t) => FutureResult::Expected(*t),
+            Err(b) => FutureResult::Other(b),
+        })
     }
 }
 

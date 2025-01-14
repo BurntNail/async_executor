@@ -1,4 +1,5 @@
 #![allow(dead_code)]
+#![warn(clippy::all, clippy::pedantic, clippy::nursery)]
 
 use crate::eg_futures::{blocking_slow_future, TimerFuture};
 use crate::executor::Executor;
@@ -48,11 +49,11 @@ fn main() {
     let el = start.elapsed();
     println!("[main] joined, took {el:?}");
 
-    let res1: u64 = executor.take_result(&id1).unwrap();
-    let res2: u64 = executor.take_result(&id2).unwrap();
-    let res3: u64 = executor.take_result(&id3).unwrap();
-    let res4: u64 = executor.take_result(&id4).unwrap();
-    let fib: u64 = executor.take_result(&fib).unwrap();
+    let res1: u64 = executor.take_result(id1).unwrap();
+    let res2: u64 = executor.take_result(id2).unwrap();
+    let res3: u64 = executor.take_result(id3).unwrap();
+    let res4: u64 = executor.take_result(id4).unwrap();
+    let fib: u64 = executor.take_result(fib).unwrap();
 
     assert_eq!(res1, 150);
     assert_eq!(res2, 50);

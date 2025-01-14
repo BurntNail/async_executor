@@ -21,7 +21,7 @@ impl WakerData {
 pub const VTABLE: RawWakerVTable = RawWakerVTable::new(clone, wake, wake_by_ref, drop);
 
 unsafe fn clone(data: *const ()) -> RawWaker {
-    let old_data = &*(data as *const WakerData);
+    let old_data = &*(data.cast::<WakerData>());
     prt!("[vtable] clone: {old_data:?}");
 
     let new_data = Box::new(WakerData {
@@ -41,7 +41,7 @@ unsafe fn wake(data: *const ()) {
 }
 
 unsafe fn wake_by_ref(data: *const ()) {
-    let data = &*(data as *const WakerData);
+    let data = &*(data.cast::<WakerData>());
     prt!("[vtable] wake R {:?}", data.id);
     data.poll_me
         .send(data.id)
