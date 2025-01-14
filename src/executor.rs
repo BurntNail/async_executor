@@ -1,10 +1,13 @@
 use crate::executor::sealed::CanUseCannotImplement;
-use crate::ids::{Id, IdGenerator};
-use crate::task_runner::Pool;
+use crate::id::{Id, IdGenerator};
+use task_runner::Pool;
 use std::any::Any;
 use std::collections::HashMap;
 use std::future::Future;
 use std::pin::Pin;
+
+mod task_runner;
+mod waker;
 
 pub type Erased = Box<dyn Any + Send>;
 pub type BoxedFuture<T> = Pin<Box<dyn Future<Output = T> + Send>>;

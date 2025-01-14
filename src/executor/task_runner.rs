@@ -1,6 +1,6 @@
 use crate::executor::{BoxedFuture, Erased};
-use crate::ids::Id;
-use crate::waker::{WakerData, VTABLE};
+use crate::id::Id;
+use crate::executor::waker::{WakerData, VTABLE};
 use std::collections::hash_map::Entry;
 use std::collections::HashMap;
 use std::sync::atomic::{AtomicBool, AtomicUsize, Ordering};

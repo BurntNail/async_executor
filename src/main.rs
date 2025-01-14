@@ -1,15 +1,13 @@
 #![allow(dead_code)]
 #![warn(clippy::all, clippy::pedantic, clippy::nursery)]
 
-use crate::eg_futures::sleep;
+use crate::timer_future::sleep;
 use crate::executor::Executor;
 use std::time::{Duration, Instant};
 
-mod eg_futures;
+mod timer_future;
 mod executor;
-mod ids;
-mod task_runner;
-mod waker;
+mod id;
 
 #[macro_export]
 macro_rules! prt {

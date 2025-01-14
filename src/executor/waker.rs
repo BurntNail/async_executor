@@ -1,4 +1,4 @@
-use crate::ids::Id;
+use crate::id::Id;
 use crate::prt;
 use std::{
     sync::mpsc::Sender,
@@ -54,7 +54,7 @@ unsafe fn drop(data: *const ()) {
 
 #[cfg(test)]
 mod tests {
-    use crate::waker::WakerData;
+    use crate::executor::waker::WakerData;
 
     #[test]
     fn send_and_sync() {
