@@ -34,11 +34,11 @@ pub struct Executor<Stage: ExecutorStage> {
 }
 
 impl Executor<Running> {
-    pub fn start() -> Self {
+    pub fn start(n_workers: usize) -> Self {
         Self {
             results_cache: HashMap::new(),
             stage_details: Running {
-                pool: Pool::new(16),
+                pool: Pool::new(n_workers),
                 id_generator: IdGenerator::default(),
             },
         }

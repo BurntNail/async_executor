@@ -24,6 +24,10 @@ impl Future for TimerFuture {
     type Output = u64;
 
     fn poll(mut self: Pin<&mut Self>, cx: &mut Context<'_>) -> Poll<Self::Output> {
+        if self.timeout_ms == 0 {
+            return Poll::Ready(self.timeout_ms);
+        }
+        
         prt!("[timerfuture] polling");
         match self.start {
             None => {

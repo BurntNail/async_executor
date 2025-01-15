@@ -19,3 +19,9 @@ impl Iterator for IdGenerator {
 pub struct Id {
     index: usize,
 }
+
+impl From<Id> for usize {
+    fn from(value: Id) -> Self {
+        value.index
+    }
+}
