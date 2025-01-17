@@ -7,18 +7,21 @@ impl Iterator for IdGenerator {
     type Item = Id;
 
     fn next(&mut self) -> Option<Self::Item> {
-        match self.next.checked_add(1) {
-            Some(new) => {
-                let ret = Some(Id { index: self.next });
-                self.next = new;
-                ret
-            }
-            None => None,
-        }
+        self.next.checked_add(1).map(|new| {
+            let ret = Id { index: self.next };
+            self.next = new;
+            ret
+        })
     }
 }
 
 #[derive(Copy, Clone, Debug, Hash, Eq, PartialEq)]
 pub struct Id {
     index: usize,
+}
+
+impl From<Id> for usize {
+    fn from(value: Id) -> Self {
+        value.index
+    }
 }

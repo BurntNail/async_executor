@@ -24,6 +24,10 @@ impl Future for TimerFuture {
     type Output = u64;
 
     fn poll(mut self: Pin<&mut Self>, cx: &mut Context<'_>) -> Poll<Self::Output> {
+        if self.timeout_ms == 0 {
+            return Poll::Ready(self.timeout_ms);
+        }
+        
         prt!("[timerfuture] polling");
         match self.start {
             None => {
@@ -57,14 +61,4 @@ impl Future for TimerFuture {
 
 pub const fn sleep(ms: u64) -> TimerFuture {
     TimerFuture::new(ms)
-}
-
-pub async fn blocking_slow_future(n: u64) -> u64 {
-    let mut res = 0;
-    for i in 0..n {
-        std::thread::sleep(Duration::from_millis(100));
-        // sleep(10).await;
-        res += i;
-    }
-    res
 }

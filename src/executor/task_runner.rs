@@ -1,13 +1,14 @@
 use crate::executor::{BoxedFuture, Erased};
-use crate::ids::Id;
-use crate::waker::{WakerData, VTABLE};
+use crate::id::Id;
+use crate::executor::waker::WakerData;
 use std::collections::hash_map::Entry;
 use std::collections::HashMap;
 use std::sync::atomic::{AtomicBool, AtomicUsize, Ordering};
 use std::sync::mpsc::{channel, Receiver, Sender};
 use std::sync::Arc;
-use std::task::{Context, Poll, RawWaker, Waker};
+use std::task::{Context, Poll};
 use std::thread::JoinHandle;
+use crate::prt;
 
 pub struct TaskRunner {
     handle: JoinHandle<()>,
@@ -44,11 +45,7 @@ impl TaskRunner {
                 for id in poll_receiver.try_iter() {
                     match to_poll.entry(id) {
                         Entry::Occupied(mut occ) => {
-                            let waker_data = Box::new(WakerData::new(poll_sender.clone(), id));
-                            let waker_data = Box::into_raw(waker_data);
-
-                            let raw_waker = RawWaker::new(waker_data as *const _, &VTABLE);
-                            let waker = unsafe { Waker::from_raw(raw_waker) };
+                            let waker = WakerData::new_waker(poll_sender.clone(), id);
                             let mut cx = Context::from_waker(&waker);
 
                             if let Poll::Ready(res) = occ.get_mut().as_mut().poll(&mut cx) {
@@ -107,11 +104,11 @@ impl Pool {
             .map(|(i, runner)| (i, runner.current_number_of_tasks()))
             .min_by_key(|(_, n)| *n)
             .unwrap();
-        println!("sending task to {runner_index}");
+        prt!("[pool] sending task to {runner_index}");
         self.runners[runner_index].send_task(id, f);
     }
 
-    pub fn collect_results(&mut self) -> impl Iterator<Item = (Id, Erased)> + use<'_> {
+    pub fn collect_results(&self) -> impl Iterator<Item = (Id, Erased)> + use<'_> {
         self.runners
             .iter()
             .flat_map(TaskRunner::take_results)
