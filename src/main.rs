@@ -4,12 +4,12 @@
 use crate::timer_future::sleep;
 use crate::executor::Executor;
 use std::time::{Duration, Instant};
-use crate::io::fully_read_from_socket;
+use crate::net::fully_read_from_socket;
 
 mod timer_future;
 mod executor;
 mod id;
-mod io;
+mod net;
 
 #[macro_export]
 macro_rules! prt {
