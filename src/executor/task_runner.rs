@@ -36,7 +36,6 @@ impl TaskRunner {
                 for (id, fut) in task_receiver.try_iter() {
                     to_poll.insert(id, fut);
                     poll_sender.send(id).unwrap();
-                    thread_current_tasks.fetch_add(1, Ordering::Relaxed);
                 }
 
                 if thread_stop.load(Ordering::SeqCst) && to_poll.is_empty() {
