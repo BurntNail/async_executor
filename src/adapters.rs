@@ -53,11 +53,11 @@ where F: Fn(IoOutcome) -> Option<T>
                         Poll::Pending
                     }
                     Some(res) => {
-                        if let Some(res) = (self.check_outcome)(res) {
-                            Poll::Ready(res)
-                        } else {
-                            panic!("found incorrect type from io thread")
-                        }
+                        (self.check_outcome)(res)
+                            .map_or_else(
+                                || panic!("found incorrect type from io thread"),
+                                Poll::Ready
+                            )
                     }
                 }
             }

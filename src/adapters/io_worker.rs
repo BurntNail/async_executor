@@ -23,7 +23,9 @@ pub enum IoReqOptions {
     FileToStd(Id),
     SetFileLen(Id, u64),
     ChangeDir(PathBuf, DirChange),
-    Copy(PathBuf, PathBuf)
+    Copy(PathBuf, PathBuf),
+    RemoveFile(PathBuf),
+    Rename(PathBuf, PathBuf),
 }
 
 pub enum DirChange {
@@ -42,16 +44,20 @@ pub enum IoOutcome {
     FileLenSet(Result<(), std::io::Error>),
     DirChanged(Result<(), std::io::Error>),
     Copied(Result<u64, std::io::Error>),
+    Removed(Result<(), std::io::Error>),
+    Renamed(Result<(), std::io::Error>),
 }
 
 pub struct IoThread {
     handle: JoinHandle<()>,
     requests_tx: Sender<(Id, IoReq)>,
+    #[allow(clippy::type_complexity)]
     results: Arc<Mutex<(Receiver<(Id, IoOutcome)>, HashMap<Id, IoOutcome>)>>,
     task_id_generator: AtomicIdGenerator,
 }
 
 impl IoThread {
+    #[allow(clippy::too_many_lines)]
     pub fn get() -> &'static Self {
         static INSTANCE: LazyLock<IoThread> = LazyLock::new(|| {
             let (requests_tx, requests_rx) = channel::<(Id, IoReq)>();
@@ -116,7 +122,7 @@ impl IoThread {
                                     let result = error
                                         .map_or(
                                             Ok(contents),
-                                            |e| Err(e)
+                                            Err
                                         );
                                     
                                     let _ = results_tx.send((request_id, IoOutcome::FileBytesRead(result)));
@@ -164,6 +170,16 @@ impl IoThread {
                             IoReqOptions::Copy(from, to) => {
                                 let res = std::fs::copy(from, to);
                                 let _ = results_tx.send((request_id, IoOutcome::Copied(res)));
+                                request.waker.wake();
+                            }
+                            IoReqOptions::RemoveFile(path) => {
+                                let res = std::fs::remove_file(path);
+                                let _ = results_tx.send((request_id, IoOutcome::Removed(res)));
+                                request.waker.wake();
+                            }
+                            IoReqOptions::Rename(from, to) => {
+                                let res = std::fs::rename(from, to);
+                                let _ = results_tx.send((request_id, IoOutcome::Renamed(res)));
                                 request.waker.wake();
                             }
                         }

@@ -82,4 +82,28 @@ pub async fn copy (from: impl AsRef<Path>, to: impl AsRef<Path>) -> Result<u64, 
     ).await
 }
 
-//TODO: delete file
+pub async fn remove_file(p: impl AsRef<Path>) -> Result<(), std::io::Error> {
+    SimpleThreadFuture::new(
+        IoReqOptions::RemoveFile(p.as_ref().to_path_buf()),
+        |outcome| {
+            if let IoOutcome::Removed(res) = outcome {
+                Some(res)
+            } else {
+                None
+            }
+        }
+    ).await
+}
+
+pub async fn rename (from: impl AsRef<Path>, to: impl AsRef<Path>) -> Result<(), std::io::Error> {
+    SimpleThreadFuture::new(
+        IoReqOptions::Rename(from.as_ref().to_path_buf(), to.as_ref().to_path_buf()),
+        |outcome| {
+            if let IoOutcome::Renamed(res) = outcome {
+                Some(res)
+            } else {
+                None
+            }
+        }
+    ).await
+}

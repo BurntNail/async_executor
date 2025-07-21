@@ -40,6 +40,7 @@ impl File {
         })
     }
 
+    #[allow(clippy::needless_pass_by_ref_mut)]
     pub async fn read (&mut self, max_bytes: usize) -> Result<Vec<u8>, std::io::Error> {
         SimpleThreadFuture::new(
             IoReqOptions::ReadFile(self.id, max_bytes),
@@ -53,6 +54,7 @@ impl File {
         ).await
     }
 
+    #[allow(clippy::needless_pass_by_ref_mut)]
     pub async fn read_to_end (&mut self) -> Result<Vec<u8>, std::io::Error> {
         SimpleThreadFuture::new(
             IoReqOptions::FullyReadFile(self.id),
@@ -66,6 +68,7 @@ impl File {
         ).await
     }
 
+    #[allow(clippy::needless_pass_by_ref_mut)]
     pub async fn write (&mut self, buf: Vec<u8>) -> Result<usize, std::io::Error> {
         SimpleThreadFuture::new(
             IoReqOptions::WriteFile(self.id, buf),
@@ -119,7 +122,8 @@ impl File {
             }
         ).await
     }
-
+    
+    #[allow(clippy::needless_pass_by_ref_mut)]
     pub async fn set_len (&mut self, size: u64) -> Result<(), std::io::Error> {
         SimpleThreadFuture::new(
             IoReqOptions::SetFileLen(self.id, size),
