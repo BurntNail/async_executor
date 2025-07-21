@@ -35,7 +35,7 @@ impl TcpStream {
                     },
                     Err(e) => {
                         if e.kind() == ErrorKind::WouldBlock {
-                            cx.waker().wake_by_ref();
+                            cx.waker().wake_by_ref(); //spurious wake? what's that 😇😇😇
                             Poll::Pending
                         } else {
                             Poll::Ready(Err(e))
