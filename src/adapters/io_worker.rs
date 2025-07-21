@@ -5,7 +5,6 @@ use std::path::PathBuf;
 use std::sync::{Arc, LazyLock, Mutex};
 use std::sync::mpsc::{channel, Receiver, Sender};
 use std::task::Waker;
-use std::thread::JoinHandle;
 use crate::id::{Id, IdGenerator};
 
 pub struct IoReq {
@@ -49,7 +48,6 @@ pub enum IoOutcome {
 }
 
 pub struct IoThread {
-    handle: JoinHandle<()>,
     requests_tx: Sender<(Id, IoReq)>,
     #[allow(clippy::type_complexity)]
     results: Arc<Mutex<(Receiver<(Id, IoOutcome)>, HashMap<Id, IoOutcome>)>>,
@@ -63,7 +61,7 @@ impl IoThread {
             let (requests_tx, requests_rx) = channel::<(Id, IoReq)>();
             let (results_tx, results_rx) = channel::<(Id, IoOutcome)>();
 
-            let handle = std::thread::Builder::new()
+            std::thread::Builder::new()
                 .name("fs_io_thread".into())
                 .spawn(move || {
                     let mut file_id_generator = IdGenerator::default();
@@ -188,7 +186,6 @@ impl IoThread {
                 .expect("unable to spawn fs_io_thread");
 
             IoThread {
-                handle,
                 requests_tx,
                 results: Arc::new(Mutex::new((results_rx, HashMap::new()))),
                 task_id_generator: Arc::new(Mutex::new(IdGenerator::default())),

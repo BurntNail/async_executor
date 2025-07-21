@@ -1,7 +1,7 @@
 #![allow(dead_code)]
 #![warn(clippy::all, clippy::pedantic, clippy::nursery)]
 
-use crate::timer_future::sleep;
+use crate::timer_future::{sleep_micros, sleep_millis};
 use crate::executor::Executor;
 use std::time::{Duration, Instant};
 use crate::adapters::file::File;
@@ -37,7 +37,7 @@ fn timer_bits () {
         let mut output = String::with_capacity(input.len());
 
         for ch in input.chars() {
-            sleep(ch as u64).await;
+            sleep_millis(ch as u64).await;
             output.push(ch);
         }
 
@@ -47,7 +47,7 @@ fn timer_bits () {
     let mut executor = Executor::start(16);
 
     let create_task = |time, local_id| async move {
-        let fut = sleep(time);
+        let fut = sleep_millis(time);
         println!("[task {local_id}] started future, awaiting timerfuture");
 
         let start = Instant::now();
@@ -96,7 +96,7 @@ fn tcp_bits () {
     let printer_boi = |count, delay| async move {
         let start = Instant::now();
         for _ in 0..count {
-            sleep(delay).await;
+            sleep_millis(delay).await;
             println!("[main] waited again :), now @ {:?}", start.elapsed());
         }
     };
@@ -118,7 +118,7 @@ fn file_bits () {
     let mut executor = Executor::start(1);
 
     let create_timer_task = |time, local_id| async move {
-        let fut = sleep(time);
+        let fut = sleep_micros(time);
         println!("[task {local_id}] started future, awaiting timerfuture");
 
         let start = Instant::now();
@@ -131,7 +131,7 @@ fn file_bits () {
     };
     
     let timers = [0, 1, 2, 3, 4, 5, 6, 7, 8, 9, 10]
-        .map(|timer_len| create_timer_task(timer_len, timer_len));
+        .map(|timer_len| create_timer_task(timer_len * 300, timer_len));
     
     let file_open_and_read = async move {
         println!("[task file] opening file");
