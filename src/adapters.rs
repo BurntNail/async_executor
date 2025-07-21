@@ -1,3 +1,3 @@
-mod fs_worker;
+mod io_worker;
 pub mod file;
 pub mod net;

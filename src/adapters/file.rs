@@ -3,7 +3,7 @@ use crate::id::Id;
 use std::future::Future;
 use std::pin::Pin;
 use std::task::{Context, Poll};
-use crate::adapters::fs_worker::{FileThread, FileThreadRequestOptions, FileThreadResult};
+use crate::adapters::io_worker::{IoThread, IoReqOptions, IoOutcome};
 
 pub struct File {
     id: Id,
@@ -22,11 +22,11 @@ impl File {
             type Output = Result<File, std::io::Error>;
 
             fn poll(mut self: Pin<&mut Self>, cx: &mut Context<'_>) -> Poll<Self::Output> {
-                let thread = FileThread::get();
+                let thread = IoThread::get();
 
                 match std::mem::replace(&mut self.0, FileOpenState::Done) {
                     FileOpenState::Open(pathbuf) => {
-                        let id = thread.send_request(FileThreadRequestOptions::OpenFile(pathbuf), cx.waker().clone());
+                        let id = thread.send_request(IoReqOptions::OpenFile(pathbuf), cx.waker().clone());
                         self.0 = FileOpenState::Waiting(id);
                         Poll::Pending
                     }
@@ -37,7 +37,7 @@ impl File {
                                 Poll::Pending
                             },
                             Some(result) => {
-                                if let FileThreadResult::FileOpenedOrCreated(res) = result {
+                                if let IoOutcome::FileOpenedOrCreated(res) = result {
                                     Poll::Ready(res.map(|id| File {id}))
                                 } else {
                                     panic!("found incorrect type from file thread")
@@ -65,11 +65,11 @@ impl File {
             type Output = Result<File, std::io::Error>;
 
             fn poll(mut self: Pin<&mut Self>, cx: &mut Context<'_>) -> Poll<Self::Output> {
-                let thread = FileThread::get();
+                let thread = IoThread::get();
 
                 match std::mem::replace(&mut self.0, FileCreateState::Done) {
                     FileCreateState::Create(pathbuf) => {
-                        let id = thread.send_request(FileThreadRequestOptions::CreateFile(pathbuf), cx.waker().clone());
+                        let id = thread.send_request(IoReqOptions::CreateFile(pathbuf), cx.waker().clone());
                         self.0 = FileCreateState::Waiting(id);
                         Poll::Pending
                     }
@@ -80,7 +80,7 @@ impl File {
                                 Poll::Pending
                             },
                             Some(result) => {
-                                if let FileThreadResult::FileOpenedOrCreated(res) = result {
+                                if let IoOutcome::FileOpenedOrCreated(res) = result {
                                     Poll::Ready(res.map(|id| File {id}))
                                 } else {
                                     panic!("found incorrect type from file thread")
@@ -108,11 +108,11 @@ impl File {
             type Output = Result<Vec<u8>, std::io::Error>;
 
             fn poll(mut self: Pin<&mut Self>, cx: &mut Context<'_>) -> Poll<Self::Output> {
-                let thread = FileThread::get();
+                let thread = IoThread::get();
 
                 match std::mem::replace(&mut self.0, FileReadState::Done) {
                     FileReadState::Read(max_bytes, file_id) => {
-                        let task_id = thread.send_request(FileThreadRequestOptions::Read(max_bytes, file_id), cx.waker().clone());
+                        let task_id = thread.send_request(IoReqOptions::ReadFile(max_bytes, file_id), cx.waker().clone());
                         self.0 = FileReadState::Waiting(task_id);
                         Poll::Pending
                     }
@@ -123,7 +123,7 @@ impl File {
                                 Poll::Pending
                             }
                             Some(result) => {
-                                if let FileThreadResult::BytesRead(res) = result {
+                                if let IoOutcome::FileBytesRead(res) = result {
                                     Poll::Ready(res)
                                 } else {
                                     panic!("found incorrect type from file thread")
@@ -141,6 +141,50 @@ impl File {
         FileRead(FileReadState::Read(self.id, max_bytes)).await
     }
 
+    pub async fn read_to_end (&mut self) -> Result<Vec<u8>, std::io::Error> {
+        enum FullyReadState {
+            FullyRead(Id),
+            Waiting(Id),
+            Done
+        }
+        struct FullyRead(FullyReadState);
+
+        impl Future for FullyRead {
+            type Output = Result<Vec<u8>, std::io::Error>;
+
+            fn poll(mut self: Pin<&mut Self>, cx: &mut Context<'_>) -> Poll<Self::Output> {
+                let thread = IoThread::get();
+                match std::mem::replace(&mut self.0, FullyReadState::Done) {
+                    FullyReadState::FullyRead(file_id) => {
+                        let task_id = thread.send_request(IoReqOptions::FullyReadFile(file_id), cx.waker().clone());
+                        self.0 = FullyReadState::Waiting(task_id);
+                        Poll::Pending
+                    }
+                    FullyReadState::Waiting(task_id) => {
+                        match thread.try_recv_result(task_id) {
+                            None => {
+                                self.0 = FullyReadState::Waiting(task_id);
+                                Poll::Pending
+                            }
+                            Some(result) => {
+                                if let IoOutcome::FileBytesRead(res) = result {
+                                    Poll::Ready(res)
+                                } else {
+                                    panic!("found incorrect type from file thread")
+                                }
+                            }
+                        }
+                    }
+                    FullyReadState::Done => {
+                        panic!("tried to poll file after completion")
+                    }
+                }
+            }
+        }
+
+        FullyRead(FullyReadState::FullyRead(self.id)).await
+    }
+
     pub async fn write (&mut self, buf: Vec<u8>) -> Result<usize, std::io::Error> {
         enum FileWriteState {
             Write(Id, Vec<u8>),
@@ -153,22 +197,22 @@ impl File {
             type Output = Result<usize, std::io::Error>;
 
             fn poll(mut self: Pin<&mut Self>, cx: &mut Context<'_>) -> Poll<Self::Output> {
-                let ft = FileThread::get();
+                let thread = IoThread::get();
 
                 match std::mem::replace(&mut self.0, FileWriteState::Done) {
                     FileWriteState::Write(id, buf) => {
-                        let task_id = ft.send_request(FileThreadRequestOptions::Write(id, buf), cx.waker().clone());
+                        let task_id = thread.send_request(IoReqOptions::WriteFile(id, buf), cx.waker().clone());
                         self.0 = FileWriteState::Waiting(task_id);
                         Poll::Pending
                     }
                     FileWriteState::Waiting(id) => {
-                        match ft.try_recv_result(id) {
+                        match thread.try_recv_result(id) {
                             None => {
                                 self.0 = FileWriteState::Waiting(id);
                                 Poll::Pending
                             }
                             Some(res) => {
-                                if let FileThreadResult::BytesWritten(res) = res {
+                                if let IoOutcome::FileBytesWritten(res) = res {
                                     Poll::Ready(res)
                                 } else {
                                     panic!("found incorrect type from file thread")
@@ -213,11 +257,11 @@ impl File {
             type Output = Result<std::fs::Metadata, std::io::Error>;
 
             fn poll(mut self: Pin<&mut Self>, cx: &mut Context<'_>) -> Poll<Self::Output> {
-                let thread = FileThread::get();
+                let thread = IoThread::get();
                 
                 match std::mem::replace(&mut self.0, MetadataState::Done) {
                     MetadataState::Metadata(file_id) => {
-                        let task_id = thread.send_request(FileThreadRequestOptions::Metadata(file_id), cx.waker().clone());
+                        let task_id = thread.send_request(IoReqOptions::FileMetadata(file_id), cx.waker().clone());
                         self.0 = MetadataState::Waiting(task_id);
                         Poll::Pending
                     }
@@ -228,7 +272,7 @@ impl File {
                                 Poll::Pending
                             }
                             Some(res) => {
-                                if let FileThreadResult::Metadata(res) = res {
+                                if let IoOutcome::FileMetadata(res) = res {
                                     Poll::Ready(res)
                                 } else {
                                     panic!("found incorrect type from file thread")
@@ -258,10 +302,10 @@ impl File {
             type Output = std::fs::File;
 
             fn poll(mut self: Pin<&mut Self>, cx: &mut Context<'_>) -> Poll<Self::Output> {
-                let thread = FileThread::get();
+                let thread = IoThread::get();
                 match std::mem::replace(&mut self.0, ToStdState::Done) {
                     ToStdState::ToStd(file_id) => {
-                        let task_id = thread.send_request(FileThreadRequestOptions::ToStd(file_id), cx.waker().clone());
+                        let task_id = thread.send_request(IoReqOptions::FileToStd(file_id), cx.waker().clone());
                         self.0 = ToStdState::Waiting(task_id);
                         Poll::Pending
                     }
@@ -272,7 +316,7 @@ impl File {
                                 Poll::Pending
                             }
                             Some(res) => {
-                                if let FileThreadResult::ToStd(file) = res {
+                                if let IoOutcome::FileToStd(file) = res {
                                     Poll::Ready(file)
                                 } else {
                                     panic!("found incorrect type from file thread")
@@ -286,7 +330,52 @@ impl File {
                 }
             }
         }
-        
+
         ToStd(ToStdState::ToStd(self.id)).await
+    }
+
+    pub async fn set_len (&mut self, size: u64) -> Result<(), std::io::Error> {
+        enum SetLenState {
+            SetLen(Id, u64),
+            Waiting(Id),
+            Done
+        }
+        struct SetLen(SetLenState);
+
+        impl Future for SetLen {
+            type Output = Result<(), std::io::Error>;
+
+            fn poll(mut self: Pin<&mut Self>, cx: &mut Context<'_>) -> Poll<Self::Output> {
+                let thread = IoThread::get();
+                match std::mem::replace(&mut self.0, SetLenState::Done) {
+                    SetLenState::SetLen(file_id, size) => {
+                        let task_id = thread.send_request(IoReqOptions::SetFileLen(file_id, size), cx.waker().clone());
+                        self.0 = SetLenState::Waiting(task_id);
+                        Poll::Pending
+                    }
+                    SetLenState::Waiting(task_id) => {
+                        match thread.try_recv_result(task_id) {
+                            None => {
+                                self.0 = SetLenState::Waiting(task_id);
+                                Poll::Pending
+                            }
+                            Some(res) => {
+                                if let IoOutcome::FileLenSet(res) = res {
+                                    Poll::Ready(res)
+                                } else {
+                                    panic!("found incorrect type from file thread")
+                                }
+                            }
+                        }
+                    }
+                    SetLenState::Done => {
+                        panic!("tried to poll file after completion")
+                    }
+                }
+            }
+        }
+
+
+        SetLen(SetLenState::SetLen(self.id, size)).await
     }
 }
