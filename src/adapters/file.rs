@@ -31,7 +31,7 @@ impl File {
                         Poll::Pending
                     }
                     FileOpenState::Waiting(id) => {
-                        match thread.try_recv_result(&id) {
+                        match thread.try_recv_result(id) {
                             None => {
                                 self.0 = FileOpenState::Waiting(id);
                                 Poll::Pending
@@ -74,7 +74,7 @@ impl File {
                         Poll::Pending
                     }
                     FileCreateState::Waiting(id) => {
-                        match thread.try_recv_result(&id) {
+                        match thread.try_recv_result(id) {
                             None => {
                                 self.0 = FileCreateState::Waiting(id);
                                 Poll::Pending
@@ -117,7 +117,7 @@ impl File {
                         Poll::Pending
                     }
                     FileReadState::Waiting(task_id) => {
-                        match thread.try_recv_result(&task_id) {
+                        match thread.try_recv_result(task_id) {
                             None => {
                                 self.0 = FileReadState::Waiting(task_id);
                                 Poll::Pending
@@ -162,7 +162,7 @@ impl File {
                         Poll::Pending
                     }
                     FileWriteState::Waiting(id) => {
-                        match ft.try_recv_result(&id) {
+                        match ft.try_recv_result(id) {
                             None => {
                                 self.0 = FileWriteState::Waiting(id);
                                 Poll::Pending
@@ -199,5 +199,50 @@ impl File {
         }
 
         Ok(())
+    }
+
+    pub async fn metadata (&self) -> Result<std::fs::Metadata, std::io::Error> {
+        enum MetadataState {
+            Metadata(Id),
+            Waiting(Id),
+            Done
+        }
+        struct Metadata(MetadataState);
+
+        impl Future for Metadata {
+            type Output = Result<std::fs::Metadata, std::io::Error>;
+
+            fn poll(mut self: Pin<&mut Self>, cx: &mut Context<'_>) -> Poll<Self::Output> {
+                let thread = FileThread::get();
+                
+                match std::mem::replace(&mut self.0, MetadataState::Done) {
+                    MetadataState::Metadata(file_id) => {
+                        let task_id = thread.send_request(FileThreadRequestOptions::Metadata(file_id), cx.waker().clone());
+                        self.0 = MetadataState::Waiting(task_id);
+                        Poll::Pending
+                    }
+                    MetadataState::Waiting(task_id) => {
+                        match thread.try_recv_result(task_id) {
+                            None => {
+                                self.0 = MetadataState::Waiting(task_id);
+                                Poll::Pending
+                            }
+                            Some(res) => {
+                                if let FileThreadResult::Metadata(res) = res {
+                                    Poll::Ready(res)
+                                } else {
+                                    panic!("found incorrect type from file thread")
+                                }
+                            }
+                        }
+                    }
+                    MetadataState::Done => {
+                        panic!("tried to poll file after completion")
+                    }
+                }
+            }
+        }
+        
+        Metadata(MetadataState::Metadata(self.id)).await
     }
 }

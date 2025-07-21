@@ -18,12 +18,14 @@ pub enum FileThreadRequestOptions {
     CreateFile(PathBuf),
     Read(Id, usize),
     Write(Id, Vec<u8>),
+    Metadata(Id),
 }
 
 pub enum FileThreadResult {
     FileOpenedOrCreated(Result<Id, std::io::Error>),
     BytesRead(Result<Vec<u8>, std::io::Error>),
-    BytesWritten(Result<usize, std::io::Error>)
+    BytesWritten(Result<usize, std::io::Error>),
+    Metadata(Result<std::fs::Metadata, std::io::Error>),
 }
 
 pub struct FileThread {
@@ -46,7 +48,7 @@ impl FileThread {
                     let mut files = HashMap::new();
                     let mut read_buffer = vec![0_u8; 128];
                     
-                    for (request_id, request) in requests_rx.into_iter() {
+                    for (request_id, request) in requests_rx {
                         match request.options {
                             FileThreadRequestOptions::OpenFile(path) => {
                                 let result = StdFile::open(path).map(|stdfile| {
@@ -76,7 +78,7 @@ impl FileThread {
                                     
                                     
                                     let result = file.read(&mut read_buffer[0..max_bytes]).map(|n| {
-                                        (&read_buffer[0..n]).to_vec()
+                                        read_buffer[0..n].to_vec()
                                     });
 
                                     let _ = results_tx.send((request_id, FileThreadResult::BytesRead(result)));
@@ -87,6 +89,13 @@ impl FileThread {
                                 if let Some(file) = files.get_mut(&file) {
                                     let result = file.write(&buffer);
                                     let _ = results_tx.send((request_id, FileThreadResult::BytesWritten(result)));
+                                    request.waker.wake();
+                                }
+                            }
+                            FileThreadRequestOptions::Metadata(file) => {
+                                if let Some(file) = files.get_mut(&file) {
+                                    let result = file.metadata();
+                                    let _ = results_tx.send((request_id, FileThreadResult::Metadata(result)));
                                     request.waker.wake();
                                 }
                             }
@@ -114,9 +123,9 @@ impl FileThread {
         id
     }
     
-    pub fn try_recv_result (&self, id: &Id) -> Option<FileThreadResult> {
+    pub fn try_recv_result (&self, id: Id) -> Option<FileThreadResult> {
         let (rx, map) = &mut *self.results.lock().unwrap();
         map.extend(rx.try_iter());
-        map.remove(id)
+        map.remove(&id)
     }
 }

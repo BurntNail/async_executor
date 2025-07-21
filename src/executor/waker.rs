@@ -16,7 +16,7 @@ pub struct WakerData {
 impl WakerData {
     pub fn new_waker(poll_me: Sender<Id>, id: Id) -> Waker {
         prt!("[wakerdata] create new {id:?}");
-        let waker_data = Box::new(WakerData {
+        let waker_data = Box::new(Self {
             poll_me,
             id
         });

@@ -129,30 +129,27 @@ fn file_bits () {
 
         res
     };
-
-    let timer_1ms = create_timer_task(1, 1);
-    let timer_10ms = create_timer_task(2, 2);
-    let timer_50ms = create_timer_task(3, 3);
-    let timer_100ms = create_timer_task(4, 4);
-    let timer_500ms = create_timer_task(5, 5);
-    let timer_1000ms = create_timer_task(6, 6);
-    let timers = [timer_1ms, timer_10ms, timer_50ms, timer_100ms, timer_500ms, timer_1000ms];
-
+    
+    let timers = [0, 1, 2, 3, 4, 5, 6, 7, 8, 9, 10]
+        .map(|timer_len| create_timer_task(timer_len, timer_len));
+    
     let file_open_and_read = async move {
+        println!("[task file] opening file");
         let mut file = File::open("Cargo.toml").await.expect("unable to open file");
+        println!("[task file] opened file, reading bytes");
 
         let mut contents = vec![];
         loop {
             let this_round = file.read(1).await.expect("error reading");
             if this_round.is_empty() {
                 break;
-            } else {
-                contents.extend_from_slice(&this_round);
             }
+            
+            contents.extend_from_slice(&this_round);
         }
 
         let file_contents_as_string = String::from_utf8(contents).expect("invalid UTF-8");
-        println!("read {file_contents_as_string:?}");
+        println!("[task file] read {file_contents_as_string:?}");
     };
 
 
