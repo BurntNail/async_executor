@@ -44,21 +44,19 @@ impl Executor<Running> {
         }
     }
 
-    pub fn run<F: Future + Send + 'static>(&mut self, f: F) -> Option<Id>
+    pub fn run<F: Future + Send + 'static>(&mut self, f: F) -> Id
     where
         F::Output: Send,
     {
         let id = self.stage_details.id_generator.next();
-        if let Some(id) = id {
-            self.stage_details.pool.run_future(
-                id,
-                Box::pin(async {
-                    let res = f.await;
-                    let erased: Erased = Box::new(res);
-                    erased
-                }),
-            );
-        }
+        self.stage_details.pool.run_future(
+            id,
+            Box::pin(async {
+                let res = f.await;
+                let erased: Erased = Box::new(res);
+                erased
+            }),
+        );
         id
     }
 

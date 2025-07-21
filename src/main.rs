@@ -60,13 +60,13 @@ fn timer_bits () {
     };
 
     let start = Instant::now();
-    let id1 = executor.run(create_task(150, 1)).unwrap();
-    let id2 = executor.run(create_task(50, 2)).unwrap();
-    let id3 = executor.run(create_task(150, 3)).unwrap();
-    let id4 = executor.run(create_task(200, 4)).unwrap();
+    let id1 = executor.run(create_task(150, 1));
+    let id2 = executor.run(create_task(50, 2));
+    let id3 = executor.run(create_task(150, 3));
+    let id4 = executor.run(create_task(200, 4));
 
-    let st = executor.run(check_string("Hello, World!")).unwrap();
-    let fib = executor.run(blocking_slow_future(18)).unwrap();
+    let st = executor.run(check_string("Hello, World!"));
+    let fib = executor.run(blocking_slow_future(18));
 
     println!("[main] created all tasks, joining executor");
     let mut executor = executor.join();
@@ -108,8 +108,8 @@ fn tcp_bits () {
     };
 
 
-    executor.run(printer_boi(1000, 100)).unwrap();
-    executor.run(streamer).unwrap();
+    executor.run(printer_boi(1000, 100));
+    executor.run(streamer);
 
     executor.join();
 }
@@ -154,9 +154,9 @@ fn file_bits () {
 
 
     for timer in timers {
-        executor.run(timer).unwrap();
+        executor.run(timer);
     }
-    executor.run(file_open_and_read).unwrap();
+    executor.run(file_open_and_read);
 
     executor.join();
 }

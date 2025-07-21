@@ -6,7 +6,7 @@ use std::sync::{Arc, LazyLock, Mutex};
 use std::sync::mpsc::{channel, Receiver, Sender};
 use std::task::Waker;
 use std::thread::JoinHandle;
-use crate::id::{AtomicIdGenerator, Id, IdGenerator};
+use crate::id::{Id, IdGenerator};
 
 pub struct IoReq {
     waker: Waker,
@@ -53,7 +53,7 @@ pub struct IoThread {
     requests_tx: Sender<(Id, IoReq)>,
     #[allow(clippy::type_complexity)]
     results: Arc<Mutex<(Receiver<(Id, IoOutcome)>, HashMap<Id, IoOutcome>)>>,
-    task_id_generator: AtomicIdGenerator,
+    task_id_generator: Arc<Mutex<IdGenerator>>,
 }
 
 impl IoThread {
@@ -74,7 +74,7 @@ impl IoThread {
                         match request.options {
                             IoReqOptions::OpenFile(path) => {
                                 let result = StdFile::open(path).map(|stdfile| {
-                                    let id = file_id_generator.next().expect("no more file IDs left");
+                                    let id = file_id_generator.next();
                                     files.insert(id, stdfile);
                                     id
                                 });
@@ -84,7 +84,7 @@ impl IoThread {
                             },
                             IoReqOptions::CreateFile(path) => {
                                 let result = StdFile::create(path).map(|stdfile| {
-                                    let id = file_id_generator.next().expect("no more file IDs left");
+                                    let id = file_id_generator.next();
                                     files.insert(id, stdfile);
                                     id
                                 });
@@ -191,7 +191,7 @@ impl IoThread {
                 handle,
                 requests_tx,
                 results: Arc::new(Mutex::new((results_rx, HashMap::new()))),
-                task_id_generator: AtomicIdGenerator::default(),
+                task_id_generator: Arc::new(Mutex::new(IdGenerator::default())),
             }
         });
 
@@ -199,7 +199,7 @@ impl IoThread {
     }
     
     pub fn send_request (&self, options: IoReqOptions, waker: Waker) -> Id {
-        let id = self.task_id_generator.next();
+        let id = self.task_id_generator.lock().unwrap().next();
         let _ = self.requests_tx.send((id, IoReq {
             waker, options
         }));

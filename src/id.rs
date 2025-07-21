@@ -1,45 +1,33 @@
-use std::sync::atomic::{AtomicUsize, Ordering};
-
-#[derive(Default)]
-pub struct AtomicIdGenerator {
-    next: AtomicUsize
-}
-
-impl AtomicIdGenerator {
-    pub fn next (&self) -> Id {
-        Id {
-            index: self.next.fetch_add(1, Ordering::SeqCst)
-        }
-    }
-}
-
-
-
-
 #[derive(Default)]
 pub struct IdGenerator {
     next: usize,
+    current_generation: usize
 }
 
-impl Iterator for IdGenerator {
-    type Item = Id;
+impl IdGenerator {
+    pub const fn next (&mut self) -> Id {
+        let ret = Id {
+            index: self.next,
+            generation: self.current_generation
+        };
 
-    fn next(&mut self) -> Option<Self::Item> {
-        self.next.checked_add(1).map(|new| {
-            let ret = Id { index: self.next };
-            self.next = new;
-            ret
-        })
+        #[allow(clippy::single_match_else)]
+        match self.next.checked_add(1) {
+            Some(new) => {
+                self.next = new;
+            },
+            None => {
+                self.next = 0;
+                self.current_generation += 1;
+            }
+        }
+        
+        ret
     }
 }
 
 #[derive(Copy, Clone, Debug, Hash, Eq, PartialEq)]
 pub struct Id {
     index: usize,
-}
-
-impl From<Id> for usize {
-    fn from(value: Id) -> Self {
-        value.index
-    }
+    generation: usize,
 }
