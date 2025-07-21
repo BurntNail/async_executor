@@ -108,8 +108,8 @@ fn tcp_bits () {
     };
 
 
-    executor.run(printer_boi(1000, 100));
-    executor.run(streamer);
+    executor.run(printer_boi(1000, 100)).unwrap();
+    executor.run(streamer).unwrap();
 
     executor.join();
 }

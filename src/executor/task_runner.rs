@@ -50,7 +50,7 @@ impl TaskRunner {
 
                             if let Poll::Ready(res) = occ.get_mut().as_mut().poll(&mut cx) {
                                 let _ = result_sender.send((id, res));
-                                drop(occ.remove());
+                                drop(occ.remove()); //we don't need to poll this future lol
                                 thread_current_tasks.fetch_sub(1, Ordering::Relaxed);
                             }
                         }

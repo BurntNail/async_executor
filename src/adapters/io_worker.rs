@@ -22,6 +22,15 @@ pub enum IoReqOptions {
     FileMetadata(Id),
     FileToStd(Id),
     SetFileLen(Id, u64),
+    ChangeDir(PathBuf, DirChange),
+    Copy(PathBuf, PathBuf)
+}
+
+pub enum DirChange {
+    CreateDir,
+    CreateDirAll,
+    RemoveDir,
+    RemoveDirAll,
 }
 
 pub enum IoOutcome {
@@ -31,6 +40,8 @@ pub enum IoOutcome {
     FileMetadata(Result<std::fs::Metadata, std::io::Error>),
     FileToStd(StdFile),
     FileLenSet(Result<(), std::io::Error>),
+    DirChanged(Result<(), std::io::Error>),
+    Copied(Result<u64, std::io::Error>),
 }
 
 pub struct IoThread {
@@ -102,10 +113,11 @@ impl IoThread {
                                         }
                                     };
                                     
-                                    let result = match error {
-                                        Some(e) => Err(e),
-                                        None => Ok(contents),
-                                    };
+                                    let result = error
+                                        .map_or(
+                                            Ok(contents),
+                                            |e| Err(e)
+                                        );
                                     
                                     let _ = results_tx.send((request_id, IoOutcome::FileBytesRead(result)));
                                     request.waker.wake();
@@ -137,6 +149,22 @@ impl IoThread {
                                     let _ = results_tx.send((request_id, IoOutcome::FileLenSet(res)));
                                     request.waker.wake();
                                 }
+                            }
+                            IoReqOptions::ChangeDir(path, change) => {
+                                let res = match change {
+                                    DirChange::CreateDir => std::fs::create_dir(path),
+                                    DirChange::CreateDirAll => std::fs::create_dir_all(path),
+                                    DirChange::RemoveDir => std::fs::remove_dir(path),
+                                    DirChange::RemoveDirAll => std::fs::remove_dir_all(path),
+                                };
+
+                                let _ = results_tx.send((request_id, IoOutcome::DirChanged(res)));
+                                request.waker.wake();
+                            }
+                            IoReqOptions::Copy(from, to) => {
+                                let res = std::fs::copy(from, to);
+                                let _ = results_tx.send((request_id, IoOutcome::Copied(res)));
+                                request.waker.wake();
                             }
                         }
                     }
