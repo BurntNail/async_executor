@@ -245,4 +245,48 @@ impl File {
         
         Metadata(MetadataState::Metadata(self.id)).await
     }
+
+    pub async fn to_std (self) -> std::fs::File {
+        enum ToStdState {
+            ToStd(Id),
+            Waiting(Id),
+            Done
+        }
+        struct ToStd (ToStdState);
+
+        impl Future for ToStd {
+            type Output = std::fs::File;
+
+            fn poll(mut self: Pin<&mut Self>, cx: &mut Context<'_>) -> Poll<Self::Output> {
+                let thread = FileThread::get();
+                match std::mem::replace(&mut self.0, ToStdState::Done) {
+                    ToStdState::ToStd(file_id) => {
+                        let task_id = thread.send_request(FileThreadRequestOptions::ToStd(file_id), cx.waker().clone());
+                        self.0 = ToStdState::Waiting(task_id);
+                        Poll::Pending
+                    }
+                    ToStdState::Waiting(task_id) => {
+                        match thread.try_recv_result(task_id) {
+                            None => {
+                                self.0 = ToStdState::Waiting(task_id);
+                                Poll::Pending
+                            }
+                            Some(res) => {
+                                if let FileThreadResult::ToStd(file) = res {
+                                    Poll::Ready(file)
+                                } else {
+                                    panic!("found incorrect type from file thread")
+                                }
+                            }
+                        }
+                    }
+                    ToStdState::Done => {
+                        panic!("tried to poll file after completion")
+                    }
+                }
+            }
+        }
+        
+        ToStd(ToStdState::ToStd(self.id)).await
+    }
 }

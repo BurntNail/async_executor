@@ -19,6 +19,7 @@ pub enum FileThreadRequestOptions {
     Read(Id, usize),
     Write(Id, Vec<u8>),
     Metadata(Id),
+    ToStd(Id),
 }
 
 pub enum FileThreadResult {
@@ -26,6 +27,7 @@ pub enum FileThreadResult {
     BytesRead(Result<Vec<u8>, std::io::Error>),
     BytesWritten(Result<usize, std::io::Error>),
     Metadata(Result<std::fs::Metadata, std::io::Error>),
+    ToStd(StdFile)
 }
 
 pub struct FileThread {
@@ -99,6 +101,12 @@ impl FileThread {
                                     request.waker.wake();
                                 }
                             }
+                            FileThreadRequestOptions::ToStd(file) => {
+                                if let Some(file) = files.remove(&file) {
+                                    let _ = results_tx.send((request_id, FileThreadResult::ToStd(file)));
+                                    request.waker.wake();
+                                }
+                            } 
                         }
                     }
                 })
