@@ -59,6 +59,6 @@ impl Future for TimerFuture {
     }
 }
 
-pub const fn sleep(ms: u64) -> TimerFuture {
-    TimerFuture::new(ms)
+pub async fn sleep(ms: u64) -> u64 {
+    TimerFuture::new(ms).await
 }

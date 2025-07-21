@@ -102,7 +102,7 @@ pub async fn fully_read_from_socket (addr: impl ToSocketAddrs + Send) -> Result<
     let mut stream = listener.accept().await?;
 
     let mut output = vec![];
-    let mut tmp = [0_u8; 1];
+    let mut tmp = [0_u8; 128];
     loop {
         match stream.read(&mut tmp).await {
             Ok(0) => break,

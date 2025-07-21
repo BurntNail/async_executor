@@ -1,3 +1,21 @@
+use std::sync::atomic::{AtomicUsize, Ordering};
+
+#[derive(Default)]
+pub struct AtomicIdGenerator {
+    next: AtomicUsize
+}
+
+impl AtomicIdGenerator {
+    pub fn next (&self) -> Id {
+        Id {
+            index: self.next.fetch_add(1, Ordering::SeqCst)
+        }
+    }
+}
+
+
+
+
 #[derive(Default)]
 pub struct IdGenerator {
     next: usize,

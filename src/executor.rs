@@ -65,10 +65,7 @@ impl Executor<Running> {
     pub fn take_result<T: 'static>(&mut self, id: Id) -> FutureResult<T> {
         self.results_cache
             .extend(self.stage_details.pool.collect_results());
-        self.results_cache.remove(&id).map_or_else(|| FutureResult::NonExistent, |x| match x.downcast() {
-            Ok(t) => FutureResult::Expected(*t),
-            Err(b) => FutureResult::Other(b),
-        })
+        self.take_result_no_update(id)
     }
 
     pub fn join(mut self) -> Executor<Finished> {
@@ -83,6 +80,12 @@ impl Executor<Running> {
 
 impl Executor<Finished> {
     pub fn take_result<T: 'static>(&mut self, id: Id) -> FutureResult<T> {
+        self.take_result_no_update(id)
+    }
+}
+
+impl<S: ExecutorStage> Executor<S> {
+    fn take_result_no_update<T: 'static>(&mut self, id: Id) -> FutureResult<T> {
         self.results_cache.remove(&id).map_or_else(|| FutureResult::NonExistent, |x| match x.downcast() {
             Ok(t) => FutureResult::Expected(*t),
             Err(b) => FutureResult::Other(b),
